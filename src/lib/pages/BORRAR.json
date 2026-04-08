@@ -1,0 +1,90 @@
+{
+    "ok": true,
+    "event": {
+        "id": "2",
+        "title": "TEST 1 SESION 1",
+        "starts_at": "2026-03-06T02:06:00.000Z",
+        "ends_at": "2026-03-25T14:04:00.000Z",
+        "status": "published",
+        "registration_mode": "auto"
+    },
+    "registration_stats": {
+        "registrations_count": 0,
+        "approved_count": 0,
+        "pending_count": 0
+    },
+    "activity_series": {
+        "inscriptions_count": 0,
+        "views_count": 29,
+        "checkins_count": 0,
+        "checkins_breakdown": {
+            "exitosos": 0,
+            "rechazados": 0,
+            "fallidos": 0
+        }
+    },
+    "recent_activity_stack": [
+        {
+            "ts": 1773267326670,
+            "event_type": "inscripcion",
+            "type": "registration",
+            "user_id": "19",
+            "registration_id": "1",
+            "registration_status": "approved",
+            "reactivated": true
+        },
+        {
+            "ts": 1773267325961,
+            "event_type": "baja",
+            "type": "unregistration",
+            "user_id": "19",
+            "registration_id": "1",
+            "registration_status": "cancelled_by_user"
+        },
+        {
+            "ts": 1773267322180,
+            "event_type": "inscripcion",
+            "type": "registration",
+            "user_id": "19",
+            "registration_id": "1",
+            "registration_status": "approved",
+            "reactivated": true
+        },
+        {
+            "ts": 1773266221632,
+            "event_type": "baja",
+            "type": "unregistration",
+            "user_id": "19",
+            "registration_id": "1",
+            "registration_status": "cancelled_by_user"
+        }
+    ],
+    "sessions": [
+        {
+            "id": "10",
+            "starts_at": "2026-03-06T02:06:00.000Z",
+            "ends_at": "2026-03-25T14:04:00.000Z",
+            "label": "Sesión principal",
+            "hours_value": "8.00"
+        }
+    ],
+    "live": {
+        "session": {
+            "id": "10",
+            "starts_at": "2026-03-06T02:06:00.000Z",
+            "ends_at": "2026-03-25T14:04:00.000Z",
+            "label": "Sesión principal",
+            "hours_value": "8.00"
+        },
+        "stats": {
+            "accepted": 0,
+            "rejected": 0,
+            "duplicate": 0,
+            "invalid_ticket": 0,
+            "cancelled_ticket": 0,
+            "total": 0,
+            "present_users": 0
+        },
+        "recent_checkins": []
+    }
+}

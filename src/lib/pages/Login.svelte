@@ -6,11 +6,13 @@
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
 	import { Separator } from '$lib/components/ui/separator';
+	import { authApi, getHomePathByRole, persistClientRole } from '$lib/services/api';
+	import { setCurrentUser } from '../../routes/store';
 
-	import { GraduationCap, Mail, Lock, Eye, EyeOff, ArrowRight } from 'lucide-svelte';
+	import { GraduationCap, Mail, Lock, Eye, EyeOff, ArrowRight, Plus } from 'lucide-svelte';
 
-	let email = 'ejemplo@unam.aragon.com.mx';
-	let password = 'admin';
+	let email = '';
+	let password = '';
 	let showPassword = false;
 
 	let loading = false;
@@ -23,17 +25,18 @@
 		error = '';
 
 		try {
-			const res = await fetch('/api/login', {
-				method: 'POST',
-				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ email, password })
-			});
+			const res = await authApi.login({ email, password });
 
-			if (!res.ok) throw new Error('Login failed');
+			//revisar si estatus es 200, si no, mostrar error
+			if (!res.ok) {
+				throw new Error(res.message || 'Error desconocido al iniciar sesión.');
+			}
 
-			await goto('/app/home');
+			setCurrentUser(res?.user || null);
+			persistClientRole(res?.role);
+			await goto(getHomePathByRole(res?.role));
 		} catch (e) {
-			error = 'No se pudo iniciar sesión (demo).';
+			error = e?.message || 'No se pudo iniciar sesión.';
 		} finally {
 			loading = false;
 		}
@@ -80,7 +83,7 @@
 					<Input
 						bind:value={email}
 						type="email"
-						placeholder="estudiante@unam.aragon.com.mx"
+						placeholder="estudiante@aragon.unam.mx"
 						class="h-16 rounded-2xl border-slate-200 bg-white pl-14 text-lg text-slate-700 shadow-sm placeholder:text-slate-400"
 					/>
 				</div>
@@ -149,6 +152,20 @@
 				<Separator class="flex-1 bg-slate-200" />
 			</div>
 
+			<!-- crear una cuenta -->
+			<Button
+				type="button"
+				variant="outline"
+				class="h-16 w-full rounded-2xl border-slate-200 bg-white text-xl font-semibold text-slate-800 shadow-sm hover:bg-slate-50"
+				onclick={() => goto('/register')}
+			>
+				<span> 
+					<Plus class="mr-2 h-5 w-5" />
+				</span>
+				Crear una cuenta
+			</Button>
+
+			<!-- ingresar con google (demo, no hace nada) -->
 			<Button
 				type="button"
 				variant="outline"

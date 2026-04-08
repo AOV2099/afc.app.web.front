@@ -1,47 +1,69 @@
 <script>
+  import { onMount } from 'svelte';
   import { Button } from "$lib/components/ui/button";
   import { Avatar, AvatarFallback, AvatarImage } from "$lib/components/ui/avatar";
-  import * as Tabs from "$lib/components/ui/tabs";
+  import { meApi } from '$lib/services/api';
+  import { currentUser, setCurrentUser } from '../../routes/store';
 
 
-  import { Settings, Camera, GraduationCap } from "lucide-svelte";
+  import { Camera, GraduationCap } from "lucide-svelte";
 	import ProfileTab from "./ProfileTab.svelte";
-	import ProgressTab from "./ProgressTab.svelte";
 
   export let title = "Cuenta";
-  export let defaultTab = "perfil"; // "perfil" | "progreso"
 
-  const user = {
-    name: "Juan Pérez",
-    career: "Ingeniería de Sistemas",
-    matricula: "202310450",
-    semester: "7mo Semestre",
-    avatarUrl:
-      ""
-  };
+  function resolveUserName(user) {
+    const firstName = user?.firstName || user?.first_name || '';
+    const lastName = user?.lastName || user?.last_name || '';
+    const full = `${firstName} ${lastName}`.trim();
+    return full || user?.email || 'Usuario';
+  }
+
+  function resolveCareer(user) {
+    if (typeof user?.career === 'string') return user.career;
+    if (user?.career?.name) return user.career.name;
+    return user?.career_name || 'Sin carrera';
+  }
+
+  function resolveStudentId(user) {
+    return user?.studentId || user?.student_id || 'Sin matrícula';
+  }
+
+  function initialsFromName(name) {
+    const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+    if (!parts.length) return 'U';
+    if (parts.length === 1) return parts[0][0]?.toUpperCase() || 'U';
+    return `${parts[0][0] || ''}${parts[1][0] || ''}`.toUpperCase();
+  }
+
+  $: userName = resolveUserName($currentUser);
+  $: userCareer = resolveCareer($currentUser);
+  $: userMatricula = resolveStudentId($currentUser);
+  $: userAvatarUrl = $currentUser?.avatarUrl || $currentUser?.avatar_url || '';
+  $: userInitials = initialsFromName(userName);
+
+  onMount(async () => {
+    if ($currentUser?.id) return;
+    try {
+      const res = await meApi.getProfile();
+      if (res?.user) setCurrentUser(res.user);
+    } catch {
+      // noop
+    }
+  });
 </script>
 
 <div class="mx-auto w-full max-w-screen-md px-4 pb-24 pt-6 sm:px-6 lg:px-8">
   <!-- Top bar -->
   <div class="relative flex items-center justify-between">
     <h1 class="text-2xl font-semibold tracking-tight sm:text-2xl">{title}</h1>
-
-    <Button
-      variant="ghost"
-      size="icon"
-      class="absolute right-0 top-1/2 -translate-y-1/2 rounded-full"
-      aria-label="Configuración"
-    >
-      <Settings class="h-8 w-8" />
-    </Button>
   </div>
 
   <!-- User block (común) -->
   <div class="mt-6 flex items-center gap-4">
     <div class="relative">
       <Avatar class="h-16 w-16 shadow-sm">
-        <AvatarImage src={user.avatarUrl} alt={user.name} />
-        <AvatarFallback>JP</AvatarFallback>
+        <AvatarImage src={userAvatarUrl} alt={userName} />
+        <AvatarFallback>{userInitials}</AvatarFallback>
       </Avatar>
 
       <Button
@@ -54,38 +76,24 @@
     </div>
 
     <div class="min-w-0">
-      <div class="text-xl font-semibold leading-tight">{user.name}</div>
-      <div class="text-sm text-muted-foreground">{user.career}</div>
+      <div class="text-xl font-semibold leading-tight">{userName}</div>
+      <div class="text-sm text-muted-foreground">{userCareer}</div>
 
       <div class="mt-1 flex flex-wrap items-center gap-2 text-sm">
         <div class="text-muted-foreground">Matrícula:</div>
-        <div class="font-medium">{user.matricula}</div>
+        <div class="font-medium">{userMatricula}</div>
 
         <span class="text-muted-foreground">•</span>
 
         <div class="inline-flex items-center gap-1 text-primary">
           <GraduationCap class="h-4 w-4" />
-          <span class="font-medium">{user.semester}</span>
+          <span class="font-medium">Perfil</span>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- Tabs -->
   <div class="mt-6">
-    <Tabs.Root value={defaultTab} class="w-full">
-      <Tabs.List class="grid w-full grid-cols-2 rounded-2xl bg-muted p-1">
-        <Tabs.Trigger value="perfil" class="rounded-xl">Perfil</Tabs.Trigger>
-        <Tabs.Trigger value="progreso" class="rounded-xl">Progreso</Tabs.Trigger>
-      </Tabs.List>
-
-      <Tabs.Content value="perfil" class="mt-6">
-        <ProfileTab />
-      </Tabs.Content>
-
-      <Tabs.Content value="progreso" class="mt-6">
-        <ProgressTab />
-      </Tabs.Content>
-    </Tabs.Root>
+    <ProfileTab />
   </div>
 </div>
