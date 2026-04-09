@@ -1,7 +1,3 @@
-<script>
-	import { resolve } from '$app/paths';
-</script>
-
 <svelte:head>
 	<title>About</title>
 	<meta name="description" content="About this app" />
@@ -23,8 +19,5 @@
 		the devtools network panel and reloading.
 	</p>
 
-	<p>
-		The <a href={resolve('/sverdle')}>Sverdle</a> page illustrates SvelteKit's data loading and form handling.
-		Try using it with JavaScript disabled!
-	</p>
+	<p>Esta aplicación AFC gestiona eventos, registros y check-ins.</p>
 </div>

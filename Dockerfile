@@ -1,4 +1,4 @@
-# Etapa 1: Build
+    # Etapa 1: Build
 FROM node:20-alpine AS builder
 
 # Instalar dependencias necesarias
