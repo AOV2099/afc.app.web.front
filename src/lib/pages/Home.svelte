@@ -2,6 +2,7 @@
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
 	import { toPng } from 'html-to-image';
+	import { toast } from 'svelte-sonner';
 	import { Card, CardContent } from '$lib/components/ui/card';
 	import { Button } from '$lib/components/ui/button';
 	import { ScrollArea, Scrollbar } from '$lib/components/ui/scroll-area';
@@ -43,6 +44,7 @@
 			speakerRole: item.organizer || 'Sin organizador',
 			aboutText: item.description || 'Sin descripción',
 			primaryLabel: 'Inscribirse ahora',
+			primaryDisabled: false,
 			availabilityLabel: item.availabilityLabel || ''
 		};
 
@@ -61,6 +63,7 @@
 	let recommendedEvents = [];
 	let recommendedLoading = false;
 	let recommendedError = '';
+	let registeringFromSheet = false;
 
 	const EVENT_IMAGE_FALLBACK =
 		'https://gaceta.cch.unam.mx/sites/default/files/styles/imagen_articulos_1920x1080/public/2020-07/video_mensaje_1.jpg?h=d1cb525d&itok=4PYz5F61';
@@ -358,6 +361,43 @@
 		}
 	}
 
+	async function registerFromEventSheet(evt) {
+		if (registeringFromSheet) return;
+
+		const eventId = Number(evt?.id);
+		if (!Number.isInteger(eventId) || eventId <= 0) {
+			toast.error('Evento inválido para inscripción.');
+			return;
+		}
+
+		registeringFromSheet = true;
+		if (selectedEvent) {
+			selectedEvent = {
+				...selectedEvent,
+				primaryDisabled: true,
+				primaryLabel: 'Inscribiendo...'
+			};
+		}
+
+		try {
+			const res = await publicEventsApi.registerToEvent(eventId, {});
+			toast.success(res?.message || 'Inscripción enviada correctamente.');
+			sheetOpen = false;
+			await Promise.all([loadUpcomingRegisteredEvents(), loadRecommendedEvents()]);
+		} catch (error) {
+			toast.error(error?.message || 'No se pudo completar la inscripción.');
+			if (selectedEvent) {
+				selectedEvent = {
+					...selectedEvent,
+					primaryDisabled: false,
+					primaryLabel: 'Inscribirse ahora'
+				};
+			}
+		} finally {
+			registeringFromSheet = false;
+		}
+	}
+
 	onMount(() => {
 		loadUpcomingRegisteredEvents();
 		loadRecommendedEvents();
@@ -574,8 +614,5 @@
 <EventDetailSheet
   bind:open={sheetOpen}
   event={selectedEvent}
-  onPrimary={(evt) => {
-    console.log("Inscribirse a:", evt);
-    sheetOpen = false;
-  }}
+	onPrimary={registerFromEventSheet}
   />

@@ -559,6 +559,9 @@
           event: res?.event || { id: evt.id },
           ticket: res?.ticket || null
         });
+
+        const current = upcoming.find((item) => item.id === evt.id)?.registrationsCount ?? 0;
+        setEventRegistrationsCount(evt.id, Math.max(Number(current) - 1, 0));
       } else {
         removeRegistrationState(evt.id);
         const current = upcoming.find((item) => item.id === evt.id)?.registrationsCount ?? 0;
