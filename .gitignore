@@ -10,5 +10,3 @@ coverage/
 
 .DS_Store
 *.log
-
-certs/*.pem

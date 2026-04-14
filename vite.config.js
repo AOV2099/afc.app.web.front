@@ -4,16 +4,56 @@ import tailwindcss from '@tailwindcss/vite';
 import { sveltekit } from '@sveltejs/kit/vite';
 import { defineConfig } from 'vite';
 
-const certKeyPath = path.resolve('certs/dev-key.pem');
-const certPath = path.resolve('certs/dev-cert.pem');
+const defaultCertKeyPath = path.resolve('certs/dev-key.pem');
+const defaultCertPath = path.resolve('certs/dev-cert.pem');
+
+function normalizePemContent(value) {
+	if (!value) return '';
+	return String(value).replace(/\\n/g, '\n').trim();
+}
+
+function resolveHttpsConfigFromEnv() {
+	const keyPath = process.env.VITE_DEV_HTTPS_KEY_PATH;
+	const certPath = process.env.VITE_DEV_HTTPS_CERT_PATH;
+
+	if (keyPath && certPath && fs.existsSync(keyPath) && fs.existsSync(certPath)) {
+		return {
+			key: fs.readFileSync(keyPath),
+			cert: fs.readFileSync(certPath)
+		};
+	}
+
+	const keyPem = normalizePemContent(process.env.VITE_DEV_HTTPS_KEY);
+	const certPem = normalizePemContent(process.env.VITE_DEV_HTTPS_CERT);
+
+	if (keyPem && certPem) {
+		return {
+			key: keyPem,
+			cert: certPem
+		};
+	}
+
+	const keyBase64 = process.env.VITE_DEV_HTTPS_KEY_BASE64;
+	const certBase64 = process.env.VITE_DEV_HTTPS_CERT_BASE64;
+
+	if (keyBase64 && certBase64) {
+		return {
+			key: Buffer.from(String(keyBase64), 'base64').toString('utf8'),
+			cert: Buffer.from(String(certBase64), 'base64').toString('utf8')
+		};
+	}
+
+	return undefined;
+}
 
 const httpsConfig =
-	fs.existsSync(certKeyPath) && fs.existsSync(certPath)
+	resolveHttpsConfigFromEnv() ||
+	(fs.existsSync(defaultCertKeyPath) && fs.existsSync(defaultCertPath)
 		? {
-			key: fs.readFileSync(certKeyPath),
-			cert: fs.readFileSync(certPath)
+			key: fs.readFileSync(defaultCertKeyPath),
+			cert: fs.readFileSync(defaultCertPath)
 		}
-		: undefined;
+		: undefined);
 
 export default defineConfig({
 	plugins: [tailwindcss(), sveltekit()],
