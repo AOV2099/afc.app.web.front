@@ -1,5 +1,6 @@
 <script>
 	import { onMount, onDestroy } from 'svelte';
+	import { toast } from 'svelte-sonner';
 	import { adminUsersApi, careersApi } from '$lib/services/api';
 	import { USER_STATUS_CATALOG } from '../../routes/store';
 
@@ -312,6 +313,7 @@
 			if (!res?.ok) throw new Error(res?.message || 'No se pudo editar el usuario.');
 
 			editOpen = false;
+			toast.success(res?.message || 'Usuario actualizado correctamente.');
 			await loadUsers();
 		} catch (e) {
 			formError = e?.message || 'No se pudo editar el usuario.';
@@ -342,6 +344,7 @@
 
 			passwordOpen = false;
 			passwordForm = { newPassword: '', confirmPassword: '' };
+			toast.success(res?.message || 'Contraseña actualizada correctamente.');
 		} catch (e) {
 			passwordError = e?.message || 'No se pudo actualizar la contraseña.';
 		} finally {
@@ -556,7 +559,10 @@
 												variant="ghost"
 												size="icon"
 												class="rounded-full"
-												onclick|stopPropagation={() => openPasswordUser(u)}
+												onclick={(event) => {
+													event.stopPropagation();
+													openPasswordUser(u);
+												}}
 												aria-label="Cambiar contraseña"
 											>
 												<KeyRound class="h-4 w-4 text-amber-600" />
@@ -565,7 +571,10 @@
 												variant="ghost"
 												size="icon"
 												class="rounded-full"
-												onclick|stopPropagation={() => openEditUser(u)}
+												onclick={(event) => {
+													event.stopPropagation();
+													openEditUser(u);
+												}}
 												aria-label="Editar"
 											>
 												<Pencil class="h-4 w-4 text-blue-600" />
@@ -624,7 +633,10 @@
 										variant="ghost"
 										size="icon"
 										class="rounded-full"
-										onclick|stopPropagation={() => openPasswordUser(u)}
+										onclick={(event) => {
+											event.stopPropagation();
+											openPasswordUser(u);
+										}}
 										aria-label="Cambiar contraseña"
 									>
 										<KeyRound class="h-4 w-4 text-amber-600" />
@@ -633,7 +645,10 @@
 										variant="ghost"
 										size="icon"
 										class="rounded-full"
-										onclick|stopPropagation={() => openEditUser(u)}
+										onclick={(event) => {
+											event.stopPropagation();
+											openEditUser(u);
+										}}
 										aria-label="Editar"
 									>
 										<Pencil class="h-4 w-4 text-blue-600" />
