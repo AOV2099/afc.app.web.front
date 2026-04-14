@@ -11,7 +11,7 @@
 	import { ScrollArea } from '$lib/components/ui/scroll-area';
 	import { Separator } from '$lib/components/ui/separator';
 
-	import { Camera, SwitchCamera, Video, LogOut, CheckCircle2, XCircle, ScanLine, AlertTriangle } from 'lucide-svelte';
+	import { Camera, SwitchCamera, Video, LogOut, CheckCircle2, XCircle, ScanLine, AlertTriangle, RefreshCw } from 'lucide-svelte';
 
 	let videoElement;
 	let qrScanner;
@@ -541,11 +541,13 @@
 						</div>
 						<Button
 							variant="outline"
-							class="h-10"
+							size="icon"
+							class="h-10 w-10"
 							onclick={loadAssignedSessions}
 							disabled={loadingAssignedSessions}
+							title="Revalidar staff"
 						>
-							Revalidar staff
+							<RefreshCw size={16} class={loadingAssignedSessions ? 'animate-spin' : ''} />
 						</Button>
 						{#if assignedSessionsError}
 							<span class="text-xs text-red-600">{assignedSessionsError}</span>
