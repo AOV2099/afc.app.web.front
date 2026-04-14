@@ -1,4 +1,4 @@
-const FALLBACK_API_BASE_URL = 'http://132.248.44.4:3004';
+const FALLBACK_API_BASE_URL = '';
 
 function normalizeBaseUrl(value) {
 	return String(value || '').trim().replace(/\/$/, '');

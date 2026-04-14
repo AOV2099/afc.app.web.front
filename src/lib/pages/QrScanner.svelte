@@ -3,8 +3,8 @@
 	import { goto } from '$app/navigation';
 	import QrScanner from 'qr-scanner';
 	import { toast } from 'svelte-sonner';
-	import { authApi, clearClientRole, adminEventsApi as adminEventsCrudApi } from '$lib/services/api';
-	import { scanEventCheckin, getEventDashboard } from '$lib/services/adminEventsApi';
+	import { authApi, clearClientRole } from '$lib/services/api';
+	import { scanEventCheckin } from '$lib/services/adminEventsApi';
 
 	import { Button } from '$lib/components/ui/button';
 	import * as Dialog from '$lib/components/ui/dialog';
@@ -24,12 +24,8 @@
 	let isStarting = false;
 	let loggingOut = false;
 	let staffUserId = '';
-	let selectedSessionId = '';
-	let assignedSessions = [];
 	let loadingAssignedSessions = false;
 	let assignedSessionsError = '';
-	let loadingSessions = false;
-	let sessionsError = '';
 	let scanInFlight = false;
 	let successfulScans = 0;
 	let failedScans = 0;
@@ -51,38 +47,6 @@
 		return Number.isInteger(n) && n > 0 ? n : null;
 	}
 
-	function extractAssignedStaffUserId(event) {
-		return parsePositiveInt(
-			event?.staff_user_id ??
-				event?.staff?.id ??
-				event?.staff_user?.id ??
-				event?.attributes?.staff_user_id ??
-				event?.meta?.staff_user_id
-		);
-	}
-
-	function formatSessionOptionLabel(session) {
-		const startsAt = session?.starts_at ? new Date(session.starts_at) : null;
-		const endsAt = session?.ends_at ? new Date(session.ends_at) : null;
-		const label = String(session?.label || 'Sesión');
-		const eventTitle = String(session?.event_title || 'Evento');
-		if (!startsAt || Number.isNaN(startsAt.getTime())) return label;
-
-		const startsLabel = startsAt.toLocaleString('es-MX', {
-			day: '2-digit',
-			month: 'short',
-			hour: '2-digit',
-			minute: '2-digit'
-		});
-
-		if (endsAt && !Number.isNaN(endsAt.getTime())) {
-			const endsLabel = endsAt.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
-			return `${eventTitle} · ${label} · ${startsLabel} - ${endsLabel}`;
-		}
-
-		return `${eventTitle} · ${label} · ${startsLabel}`;
-	}
-
 	function resolveCurrentUserId(payload) {
 		return parsePositiveInt(
 			payload?.user?.id ??
@@ -96,9 +60,6 @@
 	async function loadAssignedSessions() {
 		loadingAssignedSessions = true;
 		assignedSessionsError = '';
-		sessionsError = '';
-		selectedSessionId = '';
-		assignedSessions = [];
 
 		try {
 			const me = await authApi.me();
@@ -107,97 +68,10 @@
 				throw new Error('No se pudo identificar al usuario staff autenticado.');
 			}
 			staffUserId = String(currentUserId);
-
-			let page = 1;
-			let totalPages = 1;
-			const allEvents = [];
-
-			do {
-				const res = await adminEventsCrudApi.listEvents({
-					status: 'published',
-					page,
-					pageSize: 100
-				});
-				const rows = Array.isArray(res?.events) ? res.events : [];
-				allEvents.push(...rows);
-				totalPages = Number(res?.pagination?.totalPages || 1) || 1;
-				page += 1;
-			} while (page <= totalPages);
-
-			const assignedEvents = allEvents
-				.filter((event) => extractAssignedStaffUserId(event) === currentUserId)
-				.map((event) => ({
-					id: parsePositiveInt(event?.id),
-					title: String(event?.title || 'Evento')
-				}))
-				.filter((event) => event.id);
-
-			if (!assignedEvents.length) {
-				sessionsError = 'No tienes eventos activos asignados para escanear.';
-				return;
-			}
-
-			loadingSessions = true;
-			const dashboardResponses = await Promise.allSettled(
-				assignedEvents.map((event) =>
-					getEventDashboard(event.id, { recentLimit: 1 }).then((res) => ({
-						event,
-						payload: res?.data || res?.dashboard || res || {}
-					}))
-				)
-			);
-
-			const nextSessions = [];
-			let firstLiveSessionId = '';
-
-			for (const response of dashboardResponses) {
-				if (response.status !== 'fulfilled') continue;
-				const event = response.value.event;
-				const payload = response.value.payload;
-				const sessions = Array.isArray(payload?.sessions) ? payload.sessions : [];
-				const liveSessionId = parsePositiveInt(payload?.live?.session?.id);
-
-				for (const session of sessions) {
-					const sessionId = parsePositiveInt(session?.id);
-					if (!sessionId) continue;
-					nextSessions.push({
-						id: String(sessionId),
-						event_id: event.id,
-						event_title: event.title,
-						label: session?.label || 'Sesión',
-						starts_at: session?.starts_at || null,
-						ends_at: session?.ends_at || null
-					});
-				}
-
-				if (liveSessionId && !firstLiveSessionId) {
-					const existsInCurrent = sessions.some((session) => parsePositiveInt(session?.id) === liveSessionId);
-					if (existsInCurrent) firstLiveSessionId = String(liveSessionId);
-				}
-			}
-
-			nextSessions.sort((a, b) => {
-				const ad = a?.starts_at ? new Date(a.starts_at).getTime() : Number.POSITIVE_INFINITY;
-				const bd = b?.starts_at ? new Date(b.starts_at).getTime() : Number.POSITIVE_INFINITY;
-				return ad - bd;
-			});
-
-			assignedSessions = nextSessions;
-			if (!assignedSessions.length) {
-				sessionsError = 'No se encontraron sesiones disponibles en tus eventos asignados.';
-				return;
-			}
-
-			if (firstLiveSessionId && assignedSessions.some((session) => session.id === firstLiveSessionId)) {
-				selectedSessionId = firstLiveSessionId;
-			} else {
-				selectedSessionId = assignedSessions[0].id;
-			}
 		} catch (e) {
 			assignedSessionsError = e?.message || 'No se pudo cargar la configuración del escáner.';
 		} finally {
 			loadingAssignedSessions = false;
-			loadingSessions = false;
 		}
 	}
 
@@ -270,18 +144,6 @@
 
 	async function processQrScan(rawData) {
 		if (scanInFlight) return;
-
-		const sessionId = parsePositiveInt(selectedSessionId);
-		if (!sessionId) {
-			warn('Selecciona una sesión válida para registrar check-in.');
-			return;
-		}
-		const selectedSession = assignedSessions.find((session) => parsePositiveInt(session?.id) === sessionId);
-		const eventId = parsePositiveInt(selectedSession?.event_id);
-		if (!eventId) {
-			warn('No se pudo resolver el evento de la sesión seleccionada.');
-			return;
-		}
 		const resolvedStaffUserId = parsePositiveInt(staffUserId);
 		if (!resolvedStaffUserId) {
 			warn('No se encontró un usuario staff válido para registrar check-in.');
@@ -297,9 +159,7 @@
 		scanInFlight = true;
 
 		try {
-				const res = await scanEventCheckin(eventId, {
-				session_id: sessionId,
-				sessionId,
+				const res = await scanEventCheckin({
 				staff_user_id: resolvedStaffUserId,
 				staffUserId: resolvedStaffUserId,
 				ticket_code: ticketCode,
@@ -309,12 +169,15 @@
 			});
 
 			successfulScans += 1;
+			const responseEventId = parsePositiveInt(res?.event_id ?? res?.eventId);
+			const responseSessionId = parsePositiveInt(res?.session_id ?? res?.sessionId);
+
 			lastScanResult = {
 				ok: true,
 				type: 'success',
 				ticketCode,
-				eventId,
-				sessionId,
+				eventId: responseEventId,
+				sessionId: responseSessionId,
 				message: formatScanMessage(res),
 				at: new Date().toLocaleTimeString('es-MX')
 			};
@@ -327,8 +190,8 @@
 				ok: false,
 				type: duplicateUsed ? 'warning' : 'error',
 				ticketCode,
-				eventId,
-				sessionId,
+				eventId: parsePositiveInt(e?.details?.event_id ?? e?.details?.eventId),
+				sessionId: parsePositiveInt(e?.details?.session_id ?? e?.details?.sessionId),
 				message: readableMessage,
 				at: new Date().toLocaleTimeString('es-MX')
 			};
@@ -671,39 +534,21 @@
 
 			<div class="mx-auto max-w-3xl px-4 pt-4 space-y-3">
 				<div class="rounded-xl border bg-white/80 backdrop-blur p-3">
-					<div class="text-xs font-medium text-muted-foreground mb-2">Configuración de check-in</div>
+					<div class="text-xs font-medium text-muted-foreground mb-2">Escáner staff (auto)</div>
 					<div class="flex items-center gap-2 flex-wrap">
 						<div class="text-xs rounded-md border bg-background px-2 py-1 whitespace-nowrap">
 							Staff #{staffUserId || '—'}
 						</div>
-						<select
-							bind:value={selectedSessionId}
-							class="h-10 min-w-[260px] flex-1 rounded-md border border-input bg-background px-3 text-sm"
-							disabled={loadingAssignedSessions || loadingSessions || !assignedSessions.length}
-						>
-							{#if loadingAssignedSessions || loadingSessions}
-								<option value="">Cargando sesiones...</option>
-							{:else if !assignedSessions.length}
-								<option value="">Sin sesiones disponibles</option>
-							{:else}
-								{#each assignedSessions as session (session.id)}
-									<option value={session.id}>{formatSessionOptionLabel(session)}</option>
-								{/each}
-							{/if}
-						</select>
 						<Button
 							variant="outline"
 							class="h-10"
 							onclick={loadAssignedSessions}
-							disabled={loadingAssignedSessions || loadingSessions}
+							disabled={loadingAssignedSessions}
 						>
-							Actualizar
+							Revalidar staff
 						</Button>
 						{#if assignedSessionsError}
 							<span class="text-xs text-red-600">{assignedSessionsError}</span>
-						{/if}
-						{#if sessionsError}
-							<span class="text-xs text-red-600">{sessionsError}</span>
 						{/if}
 						<div class="text-xs text-muted-foreground whitespace-nowrap">Escaneos OK: {successfulScans}</div>
 					<div class="text-xs text-muted-foreground whitespace-nowrap">Fallidos: {failedScans}</div>
@@ -725,7 +570,7 @@
 								{lastScanResult.message}
 							</div>
 							<div class="text-xs text-muted-foreground mt-1">
-								Evento #{lastScanResult.eventId} · Sesión #{lastScanResult.sessionId} · Ticket: {lastScanResult.ticketCode} · {lastScanResult.at}
+								Evento #{lastScanResult.eventId ?? '—'} · Sesión #{lastScanResult.sessionId ?? '—'} · Ticket: {lastScanResult.ticketCode} · {lastScanResult.at}
 							</div>
 						</div>
 						{#if scanInFlight}
