@@ -1,0 +1,14 @@
+node_modules
+.svelte-kit
+build
+dist
+.git
+.gitignore
+.env
+.env.*
+playwright-report
+test-results
+.playwright
+tests
+*.log
+.DS_Store

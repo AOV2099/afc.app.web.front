@@ -1,3 +1,5 @@
+import { env } from '$env/dynamic/public';
+
 const FALLBACK_API_BASE_URL = '';
 
 function normalizeBaseUrl(value) {
@@ -5,7 +7,7 @@ function normalizeBaseUrl(value) {
 }
 
 export const API_BASE_URL =
-	normalizeBaseUrl(import.meta.env.VITE_API_BASE_URL) ||
+	normalizeBaseUrl(env.PUBLIC_API_BASE_URL) ||
 	FALLBACK_API_BASE_URL;
 
-export const GOOGLE_CLIENT_ID = String(import.meta.env.VITE_GOOGLE_CLIENT_ID || '').trim();
+export const GOOGLE_CLIENT_ID = String(env.PUBLIC_GOOGLE_CLIENT_ID || '').trim();

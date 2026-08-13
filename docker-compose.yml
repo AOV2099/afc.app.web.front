@@ -1,19 +1,16 @@
-version: '3.8'
-
 services:
   afc-front:
     build:
       context: .
       dockerfile: Dockerfile
-      args:
-        VITE_API_BASE_URL: ${VITE_API_BASE_URL:-}
-        VITE_GOOGLE_CLIENT_ID: ${VITE_GOOGLE_CLIENT_ID:-}
     ports:
       - "3000:3000"
     environment:
       - NODE_ENV=production
       - PORT=3000
       - HOST=0.0.0.0
+      - PUBLIC_API_BASE_URL=${PUBLIC_API_BASE_URL:-}
+      - PUBLIC_GOOGLE_CLIENT_ID=${PUBLIC_GOOGLE_CLIENT_ID:-}
       - AFC_BACKEND_URL=${AFC_BACKEND_URL:-}
     restart: unless-stopped
     # Descomentar si necesitas variables de entorno personalizadas

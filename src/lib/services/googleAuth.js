@@ -79,7 +79,7 @@ export async function requestGoogleAuthorizationCode(clientId) {
 	const normalizedClientId = String(clientId || '').trim();
 	if (!normalizedClientId) {
 		throw googleAuthError(
-			'El inicio con Google aún no está configurado. Agrega VITE_GOOGLE_CLIENT_ID.',
+			'El inicio con Google aún no está configurado. Agrega PUBLIC_GOOGLE_CLIENT_ID.',
 			'missing_client_id'
 		);
 	}
