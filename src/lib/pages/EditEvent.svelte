@@ -29,6 +29,7 @@
 	const resubmissionPolicyOptions = Object.values(EVENT_RESUBMISSION_POLICY_CATALOG);
 	const cancelPolicyOptions = Object.values(EVENT_CANCEL_POLICY_CATALOG);
 	const categoryOptions = EVENT_CATEGORY_OPTIONS;
+	const MAX_EVENT_HOURS = 100;
 
 	let loading = false;
 	let submitting = false;
@@ -187,12 +188,23 @@
 		};
 	}
 
+	function parseHoursInput(value) {
+		const normalized = String(value ?? '').trim();
+		if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) return null;
+		const parsed = Number(normalized);
+		return Number.isFinite(parsed) ? parsed : null;
+	}
+
 	function validatePayload(payload) {
 		if (!payload.title || !payload.starts_at || !payload.ends_at) {
 			return 'Título, inicio y fin son obligatorios.';
 		}
 		if (new Date(payload.ends_at) <= new Date(payload.starts_at)) {
 			return 'La fecha/hora de fin debe ser mayor a la de inicio.';
+		}
+		const hoursValue = parseHoursInput(form.hoursValue);
+		if (hoursValue === null || hoursValue < 0 || hoursValue > MAX_EVENT_HOURS) {
+			return `Las horas acreditables deben ser un decimal entre 0 y ${MAX_EVENT_HOURS}.`;
 		}
 		if (payload.capacity_enabled) {
 			if (!Number.isInteger(payload.capacity) || payload.capacity <= 0) {
@@ -337,7 +349,7 @@
 			<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
 				<div>
 					<div class="text-sm font-semibold text-blue-600">Horas acreditables</div>
-					<Input class="mt-2 h-11 rounded-2xl" type="number" step="0.25" min="0" bind:value={form.hoursValue} />
+					<Input class="mt-2 h-11 rounded-2xl" type="number" step="0.01" min="0" max={MAX_EVENT_HOURS} bind:value={form.hoursValue} />
 				</div>
 				{#if form.capacityEnabled}
 					<div>

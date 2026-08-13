@@ -1,34 +1,16 @@
 import { redirect } from '@sveltejs/kit';
-import { env } from '$env/dynamic/private';
+import { getAuthenticatedUser, getRoleHomePath } from '$lib/server/auth';
 
-function getSessionCookieCandidates() {
-	return [
-		env.SESSION_COOKIE_NAME,
-		'afc_sid',
-		'session',
-		'sid',
-		'connect.sid',
-		'sessionId',
-		'session_id'
-	].filter(Boolean);
-}
+export async function load({ fetch, request }) {
+	const user = await getAuthenticatedUser({ fetch, request });
 
-function getRoleHomePath(role) {
-	if (role === 'admin') return '/admin/home';
-	if (role === 'staff') return '/staff/scanner';
-	return '/app/home';
-}
-
-export function load({ cookies }) {
-	const hasSession = getSessionCookieCandidates().some((cookieName) => Boolean(cookies.get(cookieName)));
-	if (!hasSession) {
+	if (!user) {
 		throw redirect(303, '/login');
 	}
 
-	const role = String(cookies.get('afc_role') || '').trim().toLowerCase();
-	if (role && role !== 'admin') {
-		throw redirect(303, getRoleHomePath(role));
+	if (user.role !== 'admin') {
+		throw redirect(303, getRoleHomePath(user.role));
 	}
 
-	return { role };
+	return { role: user.role, user };
 }

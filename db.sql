@@ -22,8 +22,14 @@ CREATE EXTENSION IF NOT EXISTS citext;
 -- ENUM types (core dictionaries)
 -- ----------
 DO $$ BEGIN
-  CREATE TYPE membership_role AS ENUM ('student','staff','admin','auditor');
-EXCEPTION WHEN duplicate_object THEN NULL; END $$;
+  CREATE TYPE membership_role AS ENUM ('student','staff','admin','auditor','visitor');
+EXCEPTION
+  WHEN duplicate_object THEN
+    BEGIN
+      ALTER TYPE membership_role ADD VALUE IF NOT EXISTS 'visitor';
+    EXCEPTION WHEN duplicate_object THEN NULL;
+    END;
+END $$;
 
 DO $$ BEGIN
   CREATE TYPE event_status AS ENUM ('draft','published','cancelled','ended');
@@ -126,6 +132,16 @@ CREATE TABLE IF NOT EXISTS memberships (
   UNIQUE (org_id, user_id)
 );
 
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS oauth_provider TEXT;
+
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS oauth_subject TEXT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_oauth_identity
+  ON users (oauth_provider, oauth_subject)
+  WHERE oauth_provider IS NOT NULL AND oauth_subject IS NOT NULL;
+
 
 -- ----------
 -- Roles / permissions (optional but recommended for "special admin" actions)
@@ -192,6 +208,7 @@ CREATE TABLE IF NOT EXISTS events (
   -- Basic sanity checks
   CONSTRAINT chk_events_time_range CHECK (ends_at > starts_at),
   CONSTRAINT chk_events_hours_nonnegative CHECK (hours_value >= 0),
+  CONSTRAINT chk_events_hours_max CHECK (hours_value <= 100),
 
 
   status                event_status NOT NULL DEFAULT 'draft',
@@ -303,7 +320,8 @@ CREATE TABLE IF NOT EXISTS event_sessions (
   label         TEXT,
   hours_value   NUMERIC(6,2), -- if NULL, fallback to events.hours_value
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-  CONSTRAINT chk_event_sessions_time_range CHECK (ends_at > starts_at)
+  CONSTRAINT chk_event_sessions_time_range CHECK (ends_at > starts_at),
+  CONSTRAINT chk_event_sessions_hours_range CHECK (hours_value IS NULL OR hours_value BETWEEN 0 AND 100)
 );
 
 CREATE INDEX IF NOT EXISTS idx_event_sessions_event_starts

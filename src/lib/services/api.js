@@ -15,12 +15,6 @@ export function getHomePathByRole(role) {
 	return ROLE_HOME_PATH[normalizeRole(role)] || '/app/home';
 }
 
-export function persistClientRole(role) {
-	const normalized = normalizeRole(role);
-	if (typeof document === 'undefined' || !normalized) return;
-	document.cookie = `afc_role=${encodeURIComponent(normalized)}; Path=/; SameSite=Lax`;
-}
-
 export function clearClientRole() {
 	if (typeof document === 'undefined') return;
 	document.cookie = 'afc_role=; Path=/; Max-Age=0; SameSite=Lax';
@@ -56,7 +50,10 @@ async function apiFetch(path, options = {}) {
 	if (!response.ok) {
 		const message = data?.message || `Request failed (${response.status})`;
 		redirectToLoginIfUnauthorized(response.status, message);
-		throw new Error(message);
+		const error = new Error(message);
+		error.status = response.status;
+		error.data = data;
+		throw error;
 	}
 
 	return data;
@@ -79,6 +76,12 @@ export const authApi = {
 		return apiFetch('/api/login', {
 			method: 'POST',
 			body: JSON.stringify(payload)
+		});
+	},
+	loginWithGoogle(code) {
+		return apiFetch('/api/auth/google', {
+			method: 'POST',
+			body: JSON.stringify({ code })
 		});
 	},
 	me() {
@@ -136,6 +139,12 @@ export const adminEventsApi = {
 		return apiFetch('/api/admin/events', {
 			method: 'POST',
 			body: JSON.stringify(payload)
+		});
+	},
+	createEventsBulk(events) {
+		return apiFetch('/api/admin/events/bulk', {
+			method: 'POST',
+			body: JSON.stringify({ events })
 		});
 	},
 	updateEvent(eventId, payload) {

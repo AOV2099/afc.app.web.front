@@ -1,44 +1,81 @@
 <script>
 	import { goto } from '$app/navigation';
+	import { onMount } from 'svelte';
 
 	import { Card, CardContent } from '$lib/components/ui/card';
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
 	import { Separator } from '$lib/components/ui/separator';
-	import { authApi, getHomePathByRole, persistClientRole } from '$lib/services/api';
+	import { authApi, clearClientRole, getHomePathByRole } from '$lib/services/api';
+	import { GOOGLE_CLIENT_ID } from '$lib/services/config';
+	import { loadGoogleIdentityServices, requestGoogleAuthorizationCode } from '$lib/services/googleAuth';
 	import { setCurrentUser } from '../../routes/store';
 
-	import { GraduationCap, Mail, Lock, Eye, EyeOff, ArrowRight, Plus } from 'lucide-svelte';
+	import { GraduationCap, Mail, Lock, Eye, EyeOff, ArrowRight, Plus, LoaderCircle } from 'lucide-svelte';
 
 	let email = '';
 	let password = '';
 	let showPassword = false;
 
 	let loading = false;
+	let googleLoading = false;
+	let googleInitializing = Boolean(GOOGLE_CLIENT_ID);
 	let error = '';
 
-	async function handleLogin() {
-		console.log('inciando...');
+	onMount(() => {
+		if (!GOOGLE_CLIENT_ID) return;
+
+		loadGoogleIdentityServices()
+			.catch((e) => {
+				error = e?.message || 'No se pudo preparar el acceso con Google.';
+			})
+			.finally(() => {
+				googleInitializing = false;
+			});
+	});
+
+	async function finishLogin(res) {
+		if (!res?.ok) {
+			throw new Error(res?.message || 'Error desconocido al iniciar sesión.');
+		}
+
+		setCurrentUser(res?.user || null);
+		clearClientRole();
+		await goto(getHomePathByRole(res?.role || res?.user?.role));
+	}
+
+	async function handleLogin(event) {
+		event?.preventDefault();
+		if (loading || googleLoading || googleInitializing) return;
 
 		loading = true;
 		error = '';
 
 		try {
 			const res = await authApi.login({ email, password });
-
-			//revisar si estatus es 200, si no, mostrar error
-			if (!res.ok) {
-				throw new Error(res.message || 'Error desconocido al iniciar sesión.');
-			}
-
-			setCurrentUser(res?.user || null);
-			persistClientRole(res?.role);
-			await goto(getHomePathByRole(res?.role));
+			await finishLogin(res);
 		} catch (e) {
 			error = e?.message || 'No se pudo iniciar sesión.';
 		} finally {
 			loading = false;
+		}
+	}
+
+	async function handleGoogleLogin() {
+		if (loading || googleLoading || googleInitializing) return;
+
+		googleLoading = true;
+		error = '';
+
+		try {
+			const code = await requestGoogleAuthorizationCode(GOOGLE_CLIENT_ID);
+			const res = await authApi.loginWithGoogle(code);
+			await finishLogin(res);
+		} catch (e) {
+			error = e?.message || 'No se pudo iniciar sesión con Google.';
+		} finally {
+			googleLoading = false;
 		}
 	}
 </script>
@@ -69,9 +106,11 @@
 		</h1>
 		<p class="-mt-2 text-center text-lg text-slate-500">Ingresa tus credenciales para continuar</p>
 
-		<div class="mt-6 space-y-6">
+		<form class="mt-6 space-y-6" onsubmit={handleLogin}>
 			<div class="space-y-3">
-				<Label class="text-xl font-semibold text-slate-900">Correo Institucional</Label>
+				<Label for="login-email" class="text-xl font-semibold text-slate-900">
+					Correo Institucional
+				</Label>
 
 				<div class="relative">
 					<div
@@ -81,8 +120,14 @@
 					</div>
 
 					<Input
+						id="login-email"
 						bind:value={email}
 						type="email"
+						name="email"
+						autocomplete="username"
+						required
+						aria-invalid={error ? 'true' : undefined}
+						aria-describedby={error ? 'login-error' : undefined}
 						placeholder="estudiante@aragon.unam.mx"
 						class="h-16 rounded-2xl border-slate-200 bg-white pl-14 text-lg text-slate-700 shadow-sm placeholder:text-slate-400"
 					/>
@@ -90,7 +135,9 @@
 			</div>
 
 			<div class="space-y-3">
-				<Label class="text-xl font-semibold text-slate-900">Contraseña</Label>
+				<Label for="login-password" class="text-xl font-semibold text-slate-900">
+					Contraseña
+				</Label>
 
 				<div class="relative">
 					<div
@@ -100,8 +147,14 @@
 					</div>
 
 					<Input
+						id="login-password"
 						bind:value={password}
 						type={showPassword ? 'text' : 'password'}
+						name="password"
+						autocomplete="current-password"
+						required
+						aria-invalid={error ? 'true' : undefined}
+						aria-describedby={error ? 'login-error' : undefined}
 						placeholder="••••••••"
 						class="h-16 rounded-2xl border-slate-200 bg-white pr-14 pl-14 text-lg text-slate-700 shadow-sm placeholder:text-slate-400"
 					/>
@@ -109,8 +162,9 @@
 					<button
 						type="button"
 						class="absolute top-1/2 right-4 grid h-10 w-10 -translate-y-1/2 place-items-center rounded-xl text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-						on:click={() => (showPassword = !showPassword)}
-						aria-label="Mostrar/ocultar contraseña"
+						onclick={() => (showPassword = !showPassword)}
+						aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+						aria-pressed={showPassword}
 					>
 						{#if showPassword}
 							<EyeOff class="h-6 w-6" />
@@ -128,14 +182,18 @@
 			</div>
 
 			{#if error}
-				<div class="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+				<div
+					id="login-error"
+					role="alert"
+					class="rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+				>
 					{error}
 				</div>
 			{/if}
 
 			<Button
-				onclick={() => handleLogin()}
-				disabled={loading}
+				type="submit"
+				disabled={loading || googleLoading || googleInitializing}
 				class="h-16 w-full rounded-2xl bg-blue-600 text-xl font-semibold shadow-lg shadow-blue-200 hover:bg-blue-700 disabled:opacity-60"
 			>
 				{#if loading}
@@ -151,7 +209,9 @@
 				<div class="text-xs font-semibold tracking-[0.28em] text-slate-400">O CONTINÚA CON</div>
 				<Separator class="flex-1 bg-slate-200" />
 			</div>
+		</form>
 
+		<div class="mt-6 space-y-6">
 			<!-- crear una cuenta -->
 			<Button
 				type="button"
@@ -159,24 +219,31 @@
 				class="h-16 w-full rounded-2xl border-slate-200 bg-white text-xl font-semibold text-slate-800 shadow-sm hover:bg-slate-50"
 				onclick={() => goto('/register')}
 			>
-				<span> 
-					<Plus class="mr-2 h-5 w-5" />
-				</span>
+				<Plus class="mr-2 h-5 w-5" />
 				Crear una cuenta
 			</Button>
 
-			<!-- ingresar con google (demo, no hace nada) -->
+			<!-- Google Identity Services: OAuth 2.0 Authorization Code con popup -->
 			<Button
 				type="button"
 				variant="outline"
+				aria-label="Ingresar con Google"
+				aria-busy={googleLoading || googleInitializing}
+				disabled={loading || googleLoading || googleInitializing}
 				class="h-16 w-full rounded-2xl border-slate-200 bg-white text-xl font-semibold text-slate-800 shadow-sm hover:bg-slate-50"
+				onclick={handleGoogleLogin}
 			>
-				<img
-					alt="Google"
-					class="mr-3 h-6 w-6"
-					src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
-				/>
-				Ingresar con Google
+				{#if googleLoading || googleInitializing}
+					<LoaderCircle class="mr-3 h-6 w-6 animate-spin" />
+					{googleInitializing ? 'Preparando Google...' : 'Conectando con Google...'}
+				{:else}
+					<img
+						alt=""
+						class="mr-3 h-6 w-6"
+						src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/auth/google.svg"
+					/>
+					Ingresar con Google
+				{/if}
 			</Button>
 		</div>
 	</div>

@@ -11,7 +11,6 @@
 	} from '../../routes/store';
 	import {
 		EVENT_CATEGORY_OPTIONS,
-		normalizeEventCategory,
 		getEventCategoryMeta
 	} from '$lib/catalogs/eventCategories';
 	import { getEventCategoryIcon } from '$lib/catalogs/eventCategoryIcons';
@@ -54,6 +53,13 @@
 	let createdStaffDialogOpen = false;
 	let createdStaffCredentials = null;
 	let showCreatedStaffPassword = false;
+	let bulkErrorsDialogOpen = false;
+	let bulkValidationErrors = [];
+	const MAX_EVENT_HOURS = 100;
+	const minimumEventDate = (() => {
+		const now = new Date();
+		return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+	})();
 
 	let form = {
 		title: '',
@@ -351,6 +357,8 @@
 
 	function cancelCsvMode() {
 		bulk = { mode: false, file: null, rows: [], errors: [] };
+		bulkValidationErrors = [];
+		bulkErrorsDialogOpen = false;
 		// Permite re-seleccionar el mismo archivo (muchos browsers no disparan change si es el mismo)
 		if (csvInputEl) csvInputEl.value = '';
         //regresar a la slide incial
@@ -388,7 +396,9 @@
 				return;
 			}
 			if (bulk.errors.length) {
-				formError = 'Corrige los errores del CSV antes de continuar.';
+				bulkValidationErrors = bulk.errors;
+				bulkErrorsDialogOpen = true;
+				formError = 'Corrige todos los eventos señalados antes de continuar.';
 				return;
 			}
 		} else {
@@ -432,6 +442,29 @@
 		return base.toISOString();
 	}
 
+	function parseHoursInput(value) {
+		if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+		const normalized = String(value ?? '').trim();
+		if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) return null;
+		const parsed = Number(normalized);
+		return Number.isFinite(parsed) ? parsed : null;
+	}
+
+	function preventInvalidHoursKey(event) {
+		if (['e', 'E', '+', '-'].includes(event.key)) event.preventDefault();
+	}
+
+	function handleManualHoursInput(event) {
+		const hoursValue = parseHoursInput(event.currentTarget.value);
+		fieldErrors = {
+			...fieldErrors,
+			hoursValue:
+				hoursValue === null || hoursValue < 0 || hoursValue > MAX_EVENT_HOURS
+					? `Las horas acreditables deben ser un decimal entre 0 y ${MAX_EVENT_HOURS}.`
+					: undefined
+		};
+	}
+
 	function buildSingleSession(startsAt, endsAt, hoursValue) {
 		if (startsAt && endsAt) {
 			return [
@@ -439,7 +472,7 @@
 					starts_at: startsAt,
 					ends_at: endsAt,
 					label: 'Sesión principal',
-					hours_value: Number(hoursValue) || 0
+					hours_value: hoursValue
 				}
 			];
 		}
@@ -473,7 +506,7 @@
 			organizer: form.organizer?.trim() || null,
 			starts_at: startsAt,
 			ends_at: endsAt,
-			hours_value: Number(form.hoursValue) || 0,
+			hours_value: form.hoursValue,
 			capacity_enabled: Boolean(form.capacityEnabled),
 			capacity: form.capacityEnabled ? (form.cupo === '' ? null : Number(form.cupo)) : null,
 			status: form.status,
@@ -531,13 +564,14 @@
 			organizer: row.organizer?.trim() || null,
 			starts_at: startsAt,
 			ends_at: endsAt,
-			hours_value: Number(row.hoursValue) || 0,
+			hours_value: row.hoursValue,
 			capacity_enabled: Boolean(row.capacityEnabled),
 			capacity: row.capacityEnabled ? (row.cupo === '' ? null : Number(row.cupo)) : null,
 			status: row.status || 'draft',
 			registration_mode: row.registrationMode || 'auto',
 			resubmission_policy: row.resubmissionPolicy || 'only_changes_requested',
 			allow_self_checkin: Boolean(row.allowSelfCheckin),
+			cover_image_url: normalizeWebImageUrl(row.coverImageUrl) || null,
 			geo_enforced: Boolean(row.geoEnforced),
 			cancel_policy: resolveCancelPolicyForPayload(row.cancelPolicy || 'free_cancel'),
 			cancel_deadline: getCancelPolicyMeta(row.cancelPolicy || 'free_cancel').requiresDeadline
@@ -547,12 +581,17 @@
 			sessions: buildSingleSession(startsAt, endsAt, row.hoursValue),
 			attributes: {
 				location: row.location?.trim() || null,
-				organizer: row.organizer?.trim() || null
-			}
+				organizer: row.organizer?.trim() || null,
+				cover_image_url: normalizeWebImageUrl(row.coverImageUrl) || null,
+				...(row.staffUserId ? { staff_user_id: Number(row.staffUserId) } : {})
+			},
+			...(row.staffUserId
+				? { assign_staff: true, staff_user_id: Number(row.staffUserId) }
+				: {})
 		};
 	}
 
-	function validatePayload(payload) {
+	function validatePayload(payload, source = form) {
 		const payloadLocation = payload?.location || payload?.attributes?.location;
 		const payloadOrganizer = payload?.organizer || payload?.attributes?.organizer;
 		if (!payload?.title || !payload?.starts_at || !payload?.ends_at) {
@@ -564,8 +603,19 @@
 		if (!payloadOrganizer?.trim?.()) {
 			return 'El organizador es obligatorio.';
 		}
+		const now = Date.now();
+		if (new Date(payload.starts_at).getTime() < now) {
+			return 'La fecha/hora de inicio no puede estar en el pasado.';
+		}
+		if (new Date(payload.ends_at).getTime() < now) {
+			return 'La fecha/hora de fin no puede estar en el pasado.';
+		}
 		if (new Date(payload.ends_at) <= new Date(payload.starts_at)) {
 			return 'La fecha/hora de fin debe ser mayor a la de inicio.';
+		}
+		const hoursValue = parseHoursInput(payload.hours_value);
+		if (hoursValue === null || hoursValue < 0 || hoursValue > MAX_EVENT_HOURS) {
+			return `Las horas acreditables deben ser un decimal entre 0 y ${MAX_EVENT_HOURS}, sin letras.`;
 		}
 		if (payload.capacity_enabled) {
 			if (!Number.isInteger(payload.capacity) || payload.capacity <= 0) {
@@ -575,10 +625,7 @@
 		if (payload.geo_enforced && !payload.geo) {
 			return 'Si activas geocerca, debes capturar latitud/longitud.';
 		}
-		if (
-			getCancelPolicyMeta(form.cancelPolicy).requiresDeadline &&
-			(!form.cancelDeadlineDate || !form.cancelDeadlineTime)
-		) {
+		if (getCancelPolicyMeta(source.cancelPolicy).requiresDeadline && !payload.cancel_deadline) {
 			return 'Debes seleccionar fecha y hora límite para esta política de cancelación.';
 		}
 		return '';
@@ -592,6 +639,20 @@
 		if (!form.time) errors.time = 'Campo obligatorio';
 		if (!form.location?.trim()) errors.location = 'Campo obligatorio';
 		if (!form.organizer?.trim()) errors.organizer = 'Campo obligatorio';
+		const startsAt = toIsoFromDateTime(form.date, form.time);
+		const endsAt = toIsoFromDateTime(form.endDate, form.endTime);
+		if (startsAt && new Date(startsAt).getTime() < Date.now()) {
+			errors.date = 'No puede estar en el pasado';
+			errors.time = 'No puede estar en el pasado';
+		}
+		if (endsAt && new Date(endsAt).getTime() < Date.now()) {
+			errors.endDate = 'No puede estar en el pasado';
+			errors.endTime = 'No puede estar en el pasado';
+		}
+		const hoursValue = parseHoursInput(form.hoursValue);
+		if (hoursValue === null || hoursValue < 0 || hoursValue > MAX_EVENT_HOURS) {
+			errors.hoursValue = `Ingresa un decimal entre 0 y ${MAX_EVENT_HOURS}`;
+		}
 
 		if (getCancelPolicyMeta(form.cancelPolicy).requiresDeadline) {
 			if (!form.cancelDeadlineDate) errors.cancelDeadlineDate = 'Campo obligatorio';
@@ -619,6 +680,36 @@
 					? errors._payload || 'Completa los campos marcados en rojo.'
 					: ''
 		};
+	}
+
+	function validateManualField(field) {
+		let message;
+		if (field === 'title' && !form.title?.trim()) message = 'El título del evento es obligatorio.';
+		if (field === 'location' && !form.location?.trim()) message = 'La ubicación es obligatoria.';
+		if (field === 'organizer' && !form.organizer?.trim()) message = 'El organizador es obligatorio.';
+		if (field === 'date') {
+			if (!form.date) message = 'La fecha de inicio es obligatoria.';
+			else if (form.time && new Date(toIsoFromDateTime(form.date, form.time)).getTime() < Date.now()) message = 'La fecha y hora de inicio no pueden estar en el pasado.';
+		}
+		if (field === 'time') {
+			if (!form.time) message = 'La hora de inicio es obligatoria.';
+			else if (form.date && new Date(toIsoFromDateTime(form.date, form.time)).getTime() < Date.now()) message = 'La fecha y hora de inicio no pueden estar en el pasado.';
+		}
+		if (field === 'endDate') {
+			if (!form.endDate) message = 'La fecha de fin es obligatoria.';
+			else if (form.endTime && new Date(toIsoFromDateTime(form.endDate, form.endTime)).getTime() < Date.now()) message = 'La fecha y hora de fin no pueden estar en el pasado.';
+		}
+		if (field === 'endTime') {
+			if (!form.endTime) message = 'La hora de fin es obligatoria.';
+			else if (form.endDate && new Date(toIsoFromDateTime(form.endDate, form.endTime)).getTime() < Date.now()) message = 'La fecha y hora de fin no pueden estar en el pasado.';
+		}
+		if (field === 'hoursValue') {
+			const hoursValue = parseHoursInput(form.hoursValue);
+			if (hoursValue === null || hoursValue < 0 || hoursValue > MAX_EVENT_HOURS) {
+				message = `Las horas acreditables deben ser un decimal entre 0 y ${MAX_EVENT_HOURS}.`;
+			}
+		}
+		fieldErrors = { ...fieldErrors, [field]: message };
 	}
 
 	async function createSingleEvent() {
@@ -683,38 +774,39 @@
 	async function createBulkEvents() {
 		if (!bulk.rows.length) return;
 
+		const validationErrors = bulk.rows.flatMap((row, index) => {
+			const message = validatePayload(buildCsvEventPayload(row), row);
+			return message
+				? [{ index: row.csvLine || index + 2, title: row.title || 'Evento sin título', errs: [message] }]
+				: [];
+		});
+		if (validationErrors.length) {
+			bulk.errors = validationErrors;
+			bulkValidationErrors = validationErrors;
+			bulkErrorsDialogOpen = true;
+			toEdit();
+			return;
+		}
+
 		submitting = true;
-		let okCount = 0;
-		let failCount = 0;
-
-		for (const row of bulk.rows) {
-			const payload = buildCsvEventPayload(row);
-			const invalidMessage = validatePayload(payload);
-			if (invalidMessage) {
-				failCount += 1;
-				continue;
-			}
-
-			try {
-				await adminEventsApi.createEvent(payload);
-				okCount += 1;
-			} catch {
-				failCount += 1;
-			}
-		}
-
-		if (okCount > 0) {
-			toast.success(`Eventos creados: ${okCount}`);
-		}
-		if (failCount > 0) {
-			toast.error(`Eventos con error: ${failCount}`);
-		}
-
-		if (okCount > 0 && failCount === 0) {
+		try {
+			const response = await adminEventsApi.createEventsBulk(bulk.rows.map(buildCsvEventPayload));
+			toast.success(response?.message || `Eventos creados: ${bulk.rows.length}`);
 			cancelCsvMode();
+		} catch (error) {
+			const apiErrors = Array.isArray(error?.data?.errors) ? error.data.errors : [];
+			bulkValidationErrors = apiErrors.length
+				? apiErrors.map((item) => ({
+					index: item.line || item.index + 2,
+					title: item.title || 'Evento sin título',
+					errs: [item.message || 'No se pudo crear este evento.']
+				}))
+				: [{ index: '—', title: 'Importación', errs: [error?.message || 'No se pudo importar el archivo.'] }];
+			bulkErrorsDialogOpen = true;
+			toast.error('No se creó ningún evento. Revisa los errores del archivo.');
+		} finally {
+			submitting = false;
 		}
-
-		submitting = false;
 	}
 
 	$: {
@@ -794,14 +886,97 @@
 		return Number.isFinite(n) ? n : fallback;
 	}
 
-	function validateRow(obj, index) {
+	const csvHeaderLabels = {
+		title: 'Título del evento',
+		date: 'Fecha de inicio',
+		time: 'Hora de inicio',
+		end_date: 'Fecha de fin',
+		end_time: 'Hora de fin',
+		location: 'Ubicación',
+		organizer: 'Organizador'
+	};
+
+	function isValidCsvDate(value) {
+		if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+		const date = new Date(`${value}T12:00:00`);
+		return !Number.isNaN(date.getTime()) && date.toISOString().slice(0, 10) === value;
+	}
+
+	function isValidCsvTime(value) {
+		return /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value);
+	}
+
+	function isValidCsvBoolean(value) {
+		return ['', '1', '0', 'true', 'false', 'si', 'sí', 'no', 'yes', 'y', 'n'].includes(
+			String(value ?? '').trim().toLowerCase()
+		);
+	}
+
+	function validateRow(row, source, lineNumber) {
 		const errs = [];
-		if (!obj.title) errs.push('Falta title');
-		if (!obj.date) errs.push('Falta date (YYYY-MM-DD)');
-		if (!obj.time) errs.push('Falta time (HH:MM)');
-		if (!obj.location) errs.push('Falta location');
-		if (!obj.organizer) errs.push('Falta organizer');
-		return errs.length ? { index, errs } : null;
+		for (const key of ['title', 'date', 'time', 'end_date', 'end_time', 'location', 'organizer']) {
+			if (!String(source[key] || '').trim()) errs.push(`${csvHeaderLabels[key]} es obligatorio.`);
+		}
+		if (source.date && !isValidCsvDate(source.date)) {
+			errs.push('Fecha de inicio debe usar el formato AAAA-MM-DD y ser una fecha real.');
+		}
+		if (source.end_date && !isValidCsvDate(source.end_date)) {
+			errs.push('Fecha de fin debe usar el formato AAAA-MM-DD y ser una fecha real.');
+		}
+		if (source.time && !isValidCsvTime(source.time)) {
+			errs.push('Hora de inicio debe usar el formato HH:MM de 24 horas.');
+		}
+		if (source.end_time && !isValidCsvTime(source.end_time)) {
+			errs.push('Hora de fin debe usar el formato HH:MM de 24 horas.');
+		}
+		if (
+			isValidCsvDate(source.date) &&
+			isValidCsvTime(source.time) &&
+			isValidCsvDate(source.end_date) &&
+			isValidCsvTime(source.end_time) &&
+			new Date(`${source.end_date}T${source.end_time}:00`) <=
+				new Date(`${source.date}T${source.time}:00`)
+		) {
+			errs.push('La fecha/hora de fin debe ser mayor a la de inicio.');
+		}
+		const csvHoursValue = parseHoursInput(source.hours_value);
+		if (source.hours_value && (csvHoursValue === null || csvHoursValue < 0 || csvHoursValue > MAX_EVENT_HOURS)) {
+			errs.push(`Horas acreditables debe ser un decimal simple entre 0 y ${MAX_EVENT_HOURS}.`);
+		}
+		for (const key of ['capacity_enabled', 'allow_self_checkin', 'geo_enforced']) {
+			if (!isValidCsvBoolean(source[key])) {
+				errs.push(`El valor de ${key === 'capacity_enabled' ? '“Limitar cupo”' : key === 'allow_self_checkin' ? '“Permitir self check-in”' : '“Geocerca obligatoria”'} debe ser true o false.`);
+			}
+		}
+		if (row.capacityEnabled && (!/^\d+$/.test(source.capacity || '') || Number(source.capacity) <= 0)) {
+			errs.push('Cupo debe ser un entero mayor a 0 cuando está habilitado.');
+		}
+		if (!EVENT_CATEGORY_OPTIONS.some((option) => option.value === source.category)) {
+			errs.push('Categoría no corresponde a una opción permitida.');
+		}
+		if (!Object.hasOwn(EVENT_STATUS_CATALOG, row.status)) errs.push('Estatus no es válido.');
+		if (!Object.hasOwn(EVENT_REGISTRATION_MODE_CATALOG, row.registrationMode)) errs.push('Modo de registro no es válido.');
+		if (!Object.hasOwn(EVENT_RESUBMISSION_POLICY_CATALOG, row.resubmissionPolicy)) errs.push('Política de reenvío no es válida.');
+		if (!Object.hasOwn(EVENT_CANCEL_POLICY_CATALOG, row.cancelPolicy)) errs.push('Política de cancelación no es válida.');
+		if (row.geoEnforced) {
+			const lat = Number(source.geo_center_lat);
+			const lng = Number(source.geo_center_lng);
+			const radius = Number(source.geo_radius_m);
+			if (source.geo_center_lat === '' || !Number.isFinite(lat) || lat < -90 || lat > 90) errs.push('Latitud debe estar entre -90 y 90.');
+			if (source.geo_center_lng === '' || !Number.isFinite(lng) || lng < -180 || lng > 180) errs.push('Longitud debe estar entre -180 y 180.');
+			if (!Number.isFinite(radius) || radius <= 0) errs.push('Radio de geocerca debe ser mayor a 0 metros.');
+		}
+		if (source.cover_image_url && !normalizeWebImageUrl(source.cover_image_url)) errs.push('URL de imagen no es válida.');
+		if (source.staff_user_id && (!/^\d+$/.test(source.staff_user_id) || Number(source.staff_user_id) <= 0)) errs.push('Identificador de staff debe ser un entero mayor a 0.');
+
+		if (!errs.length) {
+			const payloadMessage = validatePayload(buildCsvEventPayload(row), row);
+			if (payloadMessage) errs.push(payloadMessage);
+		}
+
+		return errs.length
+			? { index: lineNumber, title: row.title || 'Evento sin título', errs }
+			: null;
 	}
 
 	async function onPickCsv(e) {
@@ -816,17 +991,21 @@
 		const text = await file.text();
 		const table = parseCsv(text);
 		if (!table.length) {
-			bulk.errors = [{ index: 0, errs: ['CSV vacío o inválido'] }];
+			bulk.errors = [{ index: 1, title: 'Archivo CSV', errs: ['El archivo está vacío o no tiene un formato válido.'] }];
+			bulkValidationErrors = bulk.errors;
+			bulkErrorsDialogOpen = true;
 			bulk.mode = false;
 			return;
 		}
 
 		// headers
 		const headers = table[0].map((h) => String(h ?? '').trim().toLowerCase());
-		const required = ['title', 'date', 'time'];
+		const required = ['title', 'date', 'time', 'end_date', 'end_time', 'location', 'organizer'];
 		for (const reqHeader of required) {
 			if (!headers.includes(reqHeader)) {
-				bulk.errors = [{ index: 0, errs: [`Falta columna obligatoria: ${reqHeader}`] }];
+				bulk.errors = [{ index: 1, title: 'Encabezado del archivo', errs: [`Falta la columna obligatoria “${csvHeaderLabels[reqHeader]}”.`] }];
+				bulkValidationErrors = bulk.errors;
+				bulkErrorsDialogOpen = true;
 				bulk.mode = false;
 				if (input) input.value = '';
 				return;
@@ -844,14 +1023,15 @@
 			}
 
 			const mapped = {
+				csvLine: i + 1,
 				title: obj.title || '',
-				category: normalizeEventCategory(obj.category, 'general'),
+				category: obj.category || 'general',
 				description: obj.description || '',
 				date: obj.date || '',
 				time: obj.time || '',
 				endDate: obj.end_date || '',
 				endTime: obj.end_time || '',
-				hoursValue: parseNumber(obj.hours_value, 2),
+				hoursValue: obj.hours_value || '2',
 				capacityEnabled: parseBool(obj.capacity_enabled, true),
 				cupo: obj.capacity || obj.cupo || '',
 				location: obj.location || '',
@@ -867,27 +1047,49 @@
 				geoStrictAccuracyM: obj.geo_strict_accuracy_m || '',
 				cancelPolicy: obj.cancel_policy || 'free_cancel',
 				cancelDeadlineDate: obj.cancel_deadline_date || '',
-				cancelDeadlineTime: obj.cancel_deadline_time || ''
+				cancelDeadlineTime: obj.cancel_deadline_time || '',
+				coverImageUrl: obj.cover_image_url || '',
+				staffUserId: obj.staff_user_id || ''
 			};
 
-			const err = validateRow(mapped, i);
+			const err = validateRow(mapped, obj, i + 1);
 			if (err) errors.push(err);
-			else rows.push(mapped);
+			rows.push(mapped);
+		}
+
+		const seenTitles = new Map();
+		for (const row of rows) {
+			const key = row.title.trim().toLocaleLowerCase('es-MX');
+			if (!key) continue;
+			if (seenTitles.has(key)) {
+				errors.push({ index: row.csvLine, title: row.title, errs: [`Título duplicado en el archivo; también aparece en la línea ${seenTitles.get(key)}.`] });
+			} else {
+				seenTitles.set(key, row.csvLine);
+			}
 		}
 
 		bulk.rows = rows;
 		bulk.errors = errors;
 		bulk.mode = rows.length > 0;
+		bulkValidationErrors = errors;
+		bulkErrorsDialogOpen = errors.length > 0;
 
 		// limpiar el input DESPUÉS de leer, para permitir re-selección del mismo archivo
 		if (input) input.value = '';
 	}
 
 	function downloadCsvTemplate() {
+		const baseDate = new Date();
+		baseDate.setDate(baseDate.getDate() + 30);
+		const secondDate = new Date(baseDate);
+		secondDate.setDate(secondDate.getDate() + 2);
+		const cancellationDate = new Date(secondDate);
+		cancellationDate.setDate(cancellationDate.getDate() - 1);
+		const formatDate = (value) => value.toISOString().slice(0, 10);
 		const content =
-			'title,category,description,date,time,end_date,end_time,hours_value,capacity_enabled,capacity,location,organizer,status,registration_mode,resubmission_policy,allow_self_checkin,geo_enforced,geo_center_lat,geo_center_lng,geo_radius_m,geo_strict_accuracy_m,cancel_policy,cancel_deadline_date,cancel_deadline_time\n' +
-			'"Semana de la Ingeniería",general,"Evento de conferencias",2026-03-10,10:00,2026-03-10,12:00,2,true,120,"Auditorio Principal","Coordinación Académica",published,auto,only_changes_requested,true,false,,,,120,,free_cancel,,\n' +
-			'"Charla de Innovación",emprendimiento,"Invitados externos",2026-03-12,14:00,2026-03-12,16:00,2,false,,"Sala 2","Dirección de Vinculación",draft,manual_review,allowed,true,true,19.432608,-99.133209,120,40,locked,2026-03-11,18:00\n';
+			'title,category,description,date,time,end_date,end_time,hours_value,capacity_enabled,capacity,location,organizer,status,registration_mode,resubmission_policy,allow_self_checkin,geo_enforced,geo_center_lat,geo_center_lng,geo_radius_m,geo_strict_accuracy_m,cancel_policy,cancel_deadline_date,cancel_deadline_time,cover_image_url,staff_user_id\n' +
+			`"Semana de Ingeniería y Tecnología",general,"Conferencias y talleres para la comunidad universitaria",${formatDate(baseDate)},10:00,${formatDate(baseDate)},13:00,3,true,120,"Auditorio Principal","Coordinación Académica",published,auto,only_changes_requested,true,false,,,120,,free_cancel,,,"https://images.unsplash.com/photo-1540575467063-178a50c2df87",\n` +
+			`"Foro de Innovación Social",emprendimiento,"Panel con especialistas y organizaciones invitadas",${formatDate(secondDate)},16:00,${formatDate(secondDate)},18:30,2.5,false,,"Sala de Usos Múltiples","Dirección de Vinculación",draft,manual_review,allowed,true,true,19.432608,-99.133209,120,40,locked,${formatDate(cancellationDate)},18:00,"https://images.unsplash.com/photo-1511578314322-379afb476865",\n`;
 
 		const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
 		const url = URL.createObjectURL(blob);
@@ -962,7 +1164,7 @@
 								<div>
 									<div class="text-[14px] font-extrabold text-foreground">Crear desde CSV</div>
 									<div class="mt-1 text-sm text-muted-foreground">
-										Sube un CSV y creamos eventos automáticamente.
+										El archivo completo se valida antes de crear cualquier evento.
 									</div>
 								</div>
 								<div class="flex items-center gap-3">
@@ -1001,7 +1203,7 @@
 								<div class="min-w-0">
 									<div class="text-sm font-semibold">Toca para subir CSV</div>
 									<div class="mt-1 text-xs text-muted-foreground">
-										Columnas base: title, date (YYYY-MM-DD), time (HH:MM). Incluye las demás opcionales en el template.
+										Usa la plantilla para incluir todos los datos obligatorios y opcionales.
 									</div>
 								</div>
 								<div class="flex items-center gap-2">
@@ -1031,10 +1233,15 @@
 
 									{#if bulk.errors.length}
 										<div class="mt-3 space-y-2">
-											<div class="text-xs font-semibold text-destructive">Errores (primeros 3)</div>
+											<div class="flex items-center justify-between gap-2">
+												<div class="text-xs font-semibold text-destructive">El archivo contiene eventos con errores</div>
+												<Button variant="outline" class="h-8 rounded-xl" onclick={() => (bulkErrorsDialogOpen = true)}>
+													Ver todos
+												</Button>
+											</div>
 											{#each bulk.errors.slice(0, 3) as err (err.index)}
 												<div class="text-xs text-muted-foreground">
-													Línea {err.index}: {err.errs.join(', ')}
+													Línea {err.index} · {err.title}: {err.errs[0]}
 												</div>
 											{/each}
 										</div>
@@ -1052,22 +1259,25 @@
 							<CardContent class="p-5">
 								<div class="space-y-5">
 									<div>
-										<div class={`text-sm font-semibold ${fieldErrors.title ? 'text-red-600' : 'text-blue-600'}`}>Título del Evento</div>
+										<Label for="create-event-title" class={`text-sm font-semibold ${fieldErrors.title ? 'text-red-600' : 'text-blue-600'}`}>Título del Evento</Label>
 										<Input
+											id="create-event-title"
+											name="title"
 											class="mt-2 h-12 rounded-2xl"
 											placeholder="Ej. Semana de la Ingeniería"
 											bind:value={form.title}
+											onblur={() => validateManualField('title')}
 										/>
 										{#if fieldErrors.title}<div class="mt-1 text-xs text-red-600">{fieldErrors.title}</div>{/if}
 									</div>
 
 									<div>
-										<div class="text-sm font-semibold text-blue-600">Categoría</div>
+										<Label for="create-event-category" class="text-sm font-semibold text-blue-600">Categoría</Label>
 										<div class="relative mt-2">
 											<span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
 												<svelte:component this={selectedCategoryIcon} class="h-4 w-4" />
 											</span>
-											<select class="h-12 w-full rounded-2xl border pl-10 pr-3" bind:value={form.category}>
+											<select id="create-event-category" name="category" class="h-12 w-full rounded-2xl border pl-10 pr-3" bind:value={form.category}>
 												{#each EVENT_CATEGORY_OPTIONS as categoryOption (categoryOption.value)}
 													<option value={categoryOption.value}>{categoryOption.label}</option>
 												{/each}
@@ -1076,8 +1286,10 @@
 									</div>
 
 									<div>
-										<div class="text-sm font-semibold text-blue-600">Descripción</div>
+										<Label for="create-event-description" class="text-sm font-semibold text-blue-600">Descripción</Label>
 										<Textarea
+											id="create-event-description"
+											name="description"
 											class="mt-2 min-h-[120px] rounded-2xl"
 											placeholder="Describe los objetivos y detalles del evento…"
 											bind:value={form.description}
@@ -1092,9 +1304,9 @@
 							<CardContent class="p-5">
 								<div class="grid w-full grid-cols-1 gap-4 sm:grid-cols-2 overflow-hidden">
 									<div>
-										<div class={`text-sm font-semibold ${fieldErrors.date ? 'text-red-600' : 'text-blue-600'}`}>Fecha</div>
+										<Label for="create-event-start-date" class={`text-sm font-semibold ${fieldErrors.date ? 'text-red-600' : 'text-blue-600'}`}>Fecha de inicio</Label>
 										<div class="relative mt-2 w-full min-w-0">
-											<Input type="date" class="h-12 w-full min-w-0 max-w-full rounded-2xl pr-10" bind:value={form.date} />
+											<Input id="create-event-start-date" name="starts_on" type="date" min={minimumEventDate} class="h-12 w-full min-w-0 max-w-full rounded-2xl pr-10" bind:value={form.date} onblur={() => validateManualField('date')} />
 											<span class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">
 												<CalendarDays class="h-4 w-4" />
 											</span>
@@ -1103,9 +1315,9 @@
 									</div>
 
 									<div>
-										<div class={`text-sm font-semibold ${fieldErrors.time ? 'text-red-600' : 'text-blue-600'}`}>Hora</div>
+										<Label for="create-event-start-time" class={`text-sm font-semibold ${fieldErrors.time ? 'text-red-600' : 'text-blue-600'}`}>Hora de inicio</Label>
 										<div class="relative mt-2 w-full min-w-0">
-											<Input type="time" class="h-12 w-full min-w-0 max-w-full rounded-2xl pr-10" bind:value={form.time} />
+											<Input id="create-event-start-time" name="starts_at_time" type="time" class="h-12 w-full min-w-0 max-w-full rounded-2xl pr-10" bind:value={form.time} onblur={() => validateManualField('time')} />
 											<span class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">
 												<Clock class="h-4 w-4" />
 											</span>
@@ -1114,33 +1326,38 @@
 									</div>
 
 									<div>
-										<div class="text-sm font-semibold text-blue-600">Fecha fin</div>
+										<Label for="create-event-end-date" class={`text-sm font-semibold ${fieldErrors.endDate ? 'text-red-600' : 'text-blue-600'}`}>Fecha de fin</Label>
 										<div class="relative mt-2 w-full min-w-0">
-											<Input type="date" class="h-12 w-full min-w-0 max-w-full rounded-2xl pr-10" bind:value={form.endDate} />
+											<Input id="create-event-end-date" name="ends_on" type="date" min={form.date || minimumEventDate} class="h-12 w-full min-w-0 max-w-full rounded-2xl pr-10" bind:value={form.endDate} onblur={() => validateManualField('endDate')} />
 											<span class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">
 												<CalendarDays class="h-4 w-4" />
 											</span>
 										</div>
+										{#if fieldErrors.endDate}<div class="mt-1 text-xs text-red-600">{fieldErrors.endDate}</div>{/if}
 									</div>
 
 									<div>
-										<div class="text-sm font-semibold text-blue-600">Hora fin</div>
+										<Label for="create-event-end-time" class={`text-sm font-semibold ${fieldErrors.endTime ? 'text-red-600' : 'text-blue-600'}`}>Hora de fin</Label>
 										<div class="relative mt-2 w-full min-w-0">
-											<Input type="time" class="h-12 w-full min-w-0 max-w-full rounded-2xl pr-10" bind:value={form.endTime} />
+											<Input id="create-event-end-time" name="ends_at_time" type="time" class="h-12 w-full min-w-0 max-w-full rounded-2xl pr-10" bind:value={form.endTime} onblur={() => validateManualField('endTime')} />
 											<span class="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">
 												<Clock class="h-4 w-4" />
 											</span>
 										</div>
+										{#if fieldErrors.endTime}<div class="mt-1 text-xs text-red-600">{fieldErrors.endTime}</div>{/if}
 									</div>
 								</div>
 
 								<div class="mt-5">
-									<div class={`text-sm font-semibold ${fieldErrors.location ? 'text-red-600' : 'text-blue-600'}`}>Ubicación</div>
+									<Label for="create-event-location" class={`text-sm font-semibold ${fieldErrors.location ? 'text-red-600' : 'text-blue-600'}`}>Ubicación</Label>
 									<div class="relative mt-2">
 										<Input
+											id="create-event-location"
+											name="location"
 											class="h-12 rounded-2xl pl-10"
 											placeholder="Auditorio Principal o URL"
 											bind:value={form.location}
+											onblur={() => validateManualField('location')}
 										/>
 										<span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
 											<MapPin class="h-4 w-4" />
@@ -1150,11 +1367,14 @@
 								</div>
 
 								<div class="mt-4">
-									<div class={`text-sm font-semibold ${fieldErrors.organizer ? 'text-red-600' : 'text-blue-600'}`}>Organizador</div>
+									<Label for="create-event-organizer" class={`text-sm font-semibold ${fieldErrors.organizer ? 'text-red-600' : 'text-blue-600'}`}>Organizador</Label>
 									<Input
+										id="create-event-organizer"
+										name="organizer"
 										class="mt-2 h-12 rounded-2xl"
 										placeholder="Ej. Coordinación Académica"
 										bind:value={form.organizer}
+										onblur={() => validateManualField('organizer')}
 									/>
 									{#if fieldErrors.organizer}<div class="mt-1 text-xs text-red-600">{fieldErrors.organizer}</div>{/if}
 								</div>
@@ -1185,10 +1405,12 @@
 
 									{#if staffAssignmentMode === 'existing'}
 										<div class="space-y-2">
-											<div class={`text-sm font-semibold ${fieldErrors.staffUserId ? 'text-red-600' : 'text-blue-600'}`}>
+											<Label for="create-event-staff-user" class={`text-sm font-semibold ${fieldErrors.staffUserId ? 'text-red-600' : 'text-blue-600'}`}>
 												Usuario staff
-											</div>
+											</Label>
 											<select
+												id="create-event-staff-user"
+												name="staff_user_id"
 												class="h-12 w-full rounded-2xl border px-3"
 												bind:value={selectedStaffUserId}
 												disabled={staffUsersLoading}
@@ -1233,7 +1455,7 @@
 											<div class="text-xs text-muted-foreground">Permite auto check-in del usuario</div>
 										</div>
 									</div>
-									<Switch bind:checked={form.allowSelfCheckin} />
+									<Switch aria-label="Permitir self check-in" bind:checked={form.allowSelfCheckin} />
 								</div>
 
 								<div class="mt-4 flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3">
@@ -1241,17 +1463,18 @@
 										<div class="text-sm font-semibold">Limitar cupo</div>
 										<div class="text-xs text-muted-foreground">Si está desactivado, el evento será de cupo abierto.</div>
 									</div>
-									<Switch bind:checked={form.capacityEnabled} />
+									<Switch aria-label="Limitar cupo" bind:checked={form.capacityEnabled} />
 								</div>
 
 								<div class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
 									<div>
-										<div class="text-sm font-semibold text-blue-600">Horas acreditables</div>
-										<Input class="mt-2 h-12 rounded-2xl" type="number" min="0" step="0.5" bind:value={form.hoursValue} />
+										<Label for="create-event-hours" class={`text-sm font-semibold ${fieldErrors.hoursValue ? 'text-red-600' : 'text-blue-600'}`}>Horas acreditables</Label>
+										<input id="create-event-hours" name="hours_value" class="border-input bg-background mt-2 flex h-12 w-full rounded-2xl border px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50" type="number" min="0" max={MAX_EVENT_HOURS} step="0.01" inputmode="decimal" autocomplete="off" bind:value={form.hoursValue} oninput={handleManualHoursInput} onkeydown={preventInvalidHoursKey} onblur={() => validateManualField('hoursValue')} />
+										{#if fieldErrors.hoursValue}<div class="mt-1 text-xs text-red-600">{fieldErrors.hoursValue}</div>{/if}
 									</div>
 									<div>
-										<div class="text-sm font-semibold text-blue-600">Estatus</div>
-										<select class="mt-2 h-12 w-full rounded-2xl border px-3" bind:value={form.status}>
+										<Label for="create-event-status" class="text-sm font-semibold text-blue-600">Estatus</Label>
+										<select id="create-event-status" name="status" class="mt-2 h-12 w-full rounded-2xl border px-3" bind:value={form.status}>
 											{#each statusOptions as status}
 												<option value={status.value}>{status.label}</option>
 											{/each}
@@ -1259,8 +1482,8 @@
 									</div>
 									{#if form.capacityEnabled}
 										<div>
-											<div class="text-sm font-semibold text-blue-600">Cupo</div>
-											<Input class="mt-2 h-12 rounded-2xl" type="number" min="1" placeholder="Ej. 120" bind:value={form.cupo} />
+											<Label for="create-event-capacity" class="text-sm font-semibold text-blue-600">Cupo</Label>
+											<Input id="create-event-capacity" name="capacity" class="mt-2 h-12 rounded-2xl" type="number" min="1" placeholder="Ej. 100" bind:value={form.cupo} />
 										</div>
 									{/if}
 								</div>
@@ -1269,16 +1492,16 @@
 
 								<div class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
 									<div>
-										<div class="text-sm font-semibold text-blue-600">Modo de registro</div>
-										<select class="mt-2 h-12 w-full rounded-2xl border px-3" bind:value={form.registrationMode}>
+										<Label for="create-event-registration-mode" class="text-sm font-semibold text-blue-600">Modo de registro</Label>
+										<select id="create-event-registration-mode" name="registration_mode" class="mt-2 h-12 w-full rounded-2xl border px-3" bind:value={form.registrationMode}>
 											{#each registrationModeOptions as mode}
 												<option value={mode.value}>{mode.label}</option>
 											{/each}
 										</select>
 									</div>
 									<div>
-										<div class="text-sm font-semibold text-blue-600">Política de reenvío de requisitos</div>
-										<select class="mt-2 h-12 w-full rounded-2xl border px-3" bind:value={form.resubmissionPolicy}>
+										<Label for="create-event-resubmission-policy" class="text-sm font-semibold text-blue-600">Política de reenvío de requisitos</Label>
+										<select id="create-event-resubmission-policy" name="resubmission_policy" class="mt-2 h-12 w-full rounded-2xl border px-3" bind:value={form.resubmissionPolicy}>
 											{#each resubmissionPolicyOptions as policy}
 												<option value={policy.value}>{policy.label}</option>
 											{/each}
@@ -1288,7 +1511,7 @@
 
 								<div class="mt-4 flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3">
 									<div class="text-sm font-semibold">Geocerca obligatoria</div>
-									<Switch bind:checked={form.geoEnforced} />
+									<Switch aria-label="Geocerca obligatoria" bind:checked={form.geoEnforced} />
 								</div>
 
 								{#if form.geoEnforced}
@@ -1307,8 +1530,8 @@
 
 								<div class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
 									<div>
-										<div class="text-sm font-semibold text-blue-600">Política de cancelación</div>
-										<select class="mt-2 h-12 w-full rounded-2xl border px-3" bind:value={form.cancelPolicy}>
+										<Label for="create-event-cancel-policy" class="text-sm font-semibold text-blue-600">Política de cancelación</Label>
+										<select id="create-event-cancel-policy" name="cancel_policy" class="mt-2 h-12 w-full rounded-2xl border px-3" bind:value={form.cancelPolicy}>
 											{#each cancelPolicyOptions as policy}
 												<option value={policy.value}>{policy.label}</option>
 											{/each}
@@ -1349,8 +1572,10 @@
 								<!-- Carga local de imagen comentada a petición del usuario. -->
 								<div class="space-y-3">
 									<div>
-										<div class="text-sm font-semibold">URL de imagen</div>
+										<Label for="create-event-cover-url" class="text-sm font-semibold">URL de imagen</Label>
 										<Input
+											id="create-event-cover-url"
+											name="cover_image_url"
 											class="mt-2 h-12 rounded-2xl"
 											placeholder="https://ejemplo.com/portada.jpg"
 											bind:value={form.coverImageUrl}
@@ -1565,6 +1790,37 @@
 		</div>
 	</main>
 </div>
+
+<Dialog.Root bind:open={bulkErrorsDialogOpen}>
+	<Dialog.Content class="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
+		<Dialog.Header>
+			<Dialog.Title>Eventos con errores</Dialog.Title>
+			<Dialog.Description>
+				No se creó ningún evento. Corrige todas las filas señaladas y vuelve a cargar el archivo.
+			</Dialog.Description>
+		</Dialog.Header>
+
+		<div class="space-y-3 py-2">
+			{#each bulkValidationErrors as error (`${error.index}-${error.title}`)}
+				<div class="rounded-2xl border border-red-200 bg-red-50/60 p-4">
+					<div class="font-semibold text-red-800">Línea {error.index} · {error.title}</div>
+					<ul class="mt-2 list-disc space-y-1 pl-5 text-sm text-red-700">
+						{#each error.errs as message}
+							<li>{message}</li>
+						{/each}
+					</ul>
+				</div>
+			{/each}
+		</div>
+
+		<Dialog.Footer>
+			<Button variant="outline" onclick={downloadCsvTemplate}>Descargar plantilla correcta</Button>
+			<Button class="bg-blue-600 text-white hover:bg-blue-700" onclick={() => (bulkErrorsDialogOpen = false)}>
+				Corregir archivo
+			</Button>
+		</Dialog.Footer>
+	</Dialog.Content>
+</Dialog.Root>
 
 <Dialog.Root bind:open={createdStaffDialogOpen}>
 	<Dialog.Content class="sm:max-w-md">

@@ -116,7 +116,10 @@
 			{:else}
 				<div class="space-y-3">
 					{#each requests as req (req.registration_id)}
-						<div class="rounded-xl border p-3">
+						<article
+							class="rounded-xl border p-3"
+							aria-label={`Solicitud para ${req?.event?.title || 'Evento'}`}
+						>
 							<div class="flex flex-wrap items-center justify-between gap-2">
 								<div class="text-sm font-semibold">{req?.event?.title || 'Evento'}</div>
 								<Badge class={requestTypeBadgeClass(req?.request_type)}>
@@ -149,7 +152,7 @@
 									Denegar
 								</Button>
 							</div>
-						</div>
+						</article>
 					{/each}
 				</div>
 			{/if}

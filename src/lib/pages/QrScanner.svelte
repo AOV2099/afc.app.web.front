@@ -7,6 +7,7 @@
 	import { scanEventCheckin } from '$lib/services/adminEventsApi';
 
 	import { Button } from '$lib/components/ui/button';
+	import { Input } from '$lib/components/ui/input';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import { ScrollArea } from '$lib/components/ui/scroll-area';
 	import { Separator } from '$lib/components/ui/separator';
@@ -30,6 +31,7 @@
 	let successfulScans = 0;
 	let failedScans = 0;
 	let lastScanResult = null;
+	let manualTicketCode = '';
 
 	const warn = (msg) => toast.warning(msg, { duration: 2500 });
 	const err = (msg) => toast.error(msg, { duration: 3000 });
@@ -96,6 +98,7 @@
 	function formatScanMessage(res, fallback = 'Check-in procesado.') {
 		return (
 			res?.message ||
+			res?.reason ||
 			res?.result?.message ||
 			res?.checkin?.message ||
 			fallback
@@ -142,6 +145,23 @@
 		return 'No se pudo registrar el check-in.';
 	}
 
+	async function getLocationEvidence() {
+		if (typeof navigator === 'undefined' || !navigator.geolocation) return {};
+
+		return new Promise((resolve) => {
+			navigator.geolocation.getCurrentPosition(
+				(position) =>
+					resolve({
+						client_lat: position.coords.latitude,
+						client_lng: position.coords.longitude,
+						accuracy_m: position.coords.accuracy
+					}),
+				() => resolve({}),
+				{ enableHighAccuracy: true, timeout: 1500, maximumAge: 10_000 }
+			);
+		});
+	}
+
 	async function processQrScan(rawData) {
 		if (scanInFlight) return;
 		const resolvedStaffUserId = parsePositiveInt(staffUserId);
@@ -159,13 +179,15 @@
 		scanInFlight = true;
 
 		try {
-				const res = await scanEventCheckin({
+			const locationEvidence = await getLocationEvidence();
+			const res = await scanEventCheckin({
 				staff_user_id: resolvedStaffUserId,
 				staffUserId: resolvedStaffUserId,
 				ticket_code: ticketCode,
 				code: ticketCode,
 				qr_data: String(rawData || ''),
-				qr: String(rawData || '')
+				qr: String(rawData || ''),
+				...locationEvidence
 			});
 
 			successfulScans += 1;
@@ -203,6 +225,14 @@
 		} finally {
 			scanInFlight = false;
 		}
+	}
+
+	async function submitManualTicket(event) {
+		event?.preventDefault();
+		const ticketCode = manualTicketCode.trim();
+		if (!ticketCode || scanInFlight) return;
+		await processQrScan(ticketCode);
+		manualTicketCode = '';
 	}
 
 	function choosePreferredCamera(found) {
@@ -456,7 +486,7 @@
 					<Button
 						size="icon"
 						variant="secondary"
-						on:click={switchCameraQuick}
+						onclick={switchCameraQuick}
 						disabled={isStarting}
 						title="Alternar cámara"
 					>
@@ -488,7 +518,7 @@
 											type="button"
 											class="w-full text-left rounded-md border bg-background/70 hover:bg-muted/70 transition p-3 disabled:opacity-60"
 											disabled={isStarting}
-											on:click={() => selectCamera(cam.id)}
+											onclick={() => selectCamera(cam.id)}
 										>
 											<div class="flex items-center justify-between gap-2">
 												<span class="truncate">{cam.label || 'Cámara'}</span>
@@ -504,7 +534,7 @@
 							</ScrollArea>
 
 							<Dialog.Footer class="mt-4">
-								<Button variant="secondary" on:click={() => (dialogOpen = false)}>Cerrar</Button>
+								<Button variant="secondary" onclick={() => (dialogOpen = false)}>Cerrar</Button>
 							</Dialog.Footer>
 						</Dialog.Content>
 					</Dialog.Root>
@@ -556,6 +586,24 @@
 					<div class="text-xs text-muted-foreground whitespace-nowrap">Fallidos: {failedScans}</div>
 				</div>
 			</div>
+
+			<form class="rounded-xl border bg-white/80 p-3 backdrop-blur" onsubmit={submitManualTicket}>
+				<label for="manual-ticket-code" class="text-xs font-medium text-muted-foreground">
+					Código de ticket (alternativa manual)
+				</label>
+				<div class="mt-2 flex gap-2">
+					<Input
+						id="manual-ticket-code"
+						name="ticket_code"
+						autocomplete="off"
+						placeholder="Pega el código contenido en el QR"
+						bind:value={manualTicketCode}
+					/>
+					<Button type="submit" disabled={scanInFlight || !manualTicketCode.trim()}>
+						{scanInFlight ? 'Registrando…' : 'Registrar check-in'}
+					</Button>
+				</div>
+			</form>
 
 			{#if lastScanResult}
 				<div class={`rounded-xl border p-3 ${lastScanResult.type === 'success' ? 'bg-emerald-50/90 border-emerald-200' : lastScanResult.type === 'warning' ? 'bg-amber-50/90 border-amber-200' : 'bg-red-50/90 border-red-200'}`}>

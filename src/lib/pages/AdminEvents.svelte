@@ -18,10 +18,16 @@
   import { Textarea } from "$lib/components/ui/textarea";
   import { Switch } from "$lib/components/ui/switch";
   import * as Dialog from "$lib/components/ui/dialog";
-  import { CalendarDays, MapPin, User } from "lucide-svelte";
+  import { CalendarDays, MapPin, Plus, User } from "lucide-svelte";
 
   const FALLBACK_IMAGE =
     "https://gaceta.cch.unam.mx/sites/default/files/styles/imagen_articulos_1920x1080/public/2020-07/video_mensaje_1.jpg?h=d1cb525d&itok=4PYz5F61";
+  const MAX_EVENT_HOURS = 100;
+  const minimumEventDatetime = (() => {
+    const now = new Date();
+    const offset = now.getTimezoneOffset() * 60_000;
+    return new Date(now.getTime() - offset).toISOString().slice(0, 16);
+  })();
 
   let loading = false;
   let error = "";
@@ -257,6 +263,26 @@
     return dt.toISOString();
   }
 
+  function parseHoursInput(value) {
+    if (typeof value === "number") return Number.isFinite(value) ? value : null;
+    const normalized = String(value ?? "").trim();
+    if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) return null;
+    const parsed = Number(normalized);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+
+  function handleEditHoursInput(event) {
+    const cleaned = String(event.currentTarget.value ?? "")
+      .replace(",", ".")
+      .replace(/[^\d.]/g, "");
+    const [whole = "", ...fractionParts] = cleaned.split(".");
+    const sanitized = fractionParts.length
+      ? `${whole || "0"}.${fractionParts.join("").slice(0, 2)}`
+      : whole;
+    event.currentTarget.value = sanitized;
+    editForm.hoursValue = sanitized;
+  }
+
   function resolveCancelPolicyForPayload(policy) {
     if (policy === "free_until_deadline") return "free_cancel";
     return policy;
@@ -420,7 +446,7 @@
           starts_at: startsAt,
           ends_at: endsAt,
           label: "Sesión principal",
-          hours_value: Number(hoursValue) || 0,
+          hours_value: hoursValue,
         },
       ];
     }
@@ -447,7 +473,7 @@
       organizer: editForm.organizer?.trim() || null,
       starts_at: startsAt,
       ends_at: endsAt,
-      hours_value: Number(editForm.hoursValue) || 0,
+      hours_value: editForm.hoursValue,
       capacity_enabled: Boolean(editForm.capacityEnabled),
       capacity: editForm.capacityEnabled
         ? editForm.cupo === ""
@@ -502,6 +528,16 @@
     }
     if (new Date(payload.ends_at) <= new Date(payload.starts_at)) {
       return "La fecha/hora de fin debe ser mayor a la de inicio.";
+    }
+    if (new Date(payload.starts_at).getTime() < Date.now()) {
+      return "La fecha/hora de inicio no puede estar en el pasado.";
+    }
+    if (new Date(payload.ends_at).getTime() < Date.now()) {
+      return "La fecha/hora de fin no puede estar en el pasado.";
+    }
+    const hoursValue = parseHoursInput(payload.hours_value);
+    if (hoursValue === null || hoursValue < 0 || hoursValue > MAX_EVENT_HOURS) {
+      return `Las horas acreditables deben ser un decimal entre 0 y ${MAX_EVENT_HOURS}, sin letras.`;
     }
     if (payload.geo_enforced && !payload.geo) {
       return "Si activas geocerca, captura latitud y longitud.";
@@ -623,19 +659,34 @@
 <div class="mx-auto w-full max-w-screen-xl px-4 pb-16 pt-6 sm:px-6 lg:px-8">
   <div class="flex items-center justify-between gap-3">
     <h1 class="text-2xl font-semibold tracking-tight sm:text-3xl">Eventos</h1>
-    <Badge class="rounded-full bg-blue-50 text-blue-700 hover:bg-blue-50">
-      {pagination.total} disponibles
-    </Badge>
+    <div class="flex items-center gap-2">
+      <Badge class="rounded-full bg-blue-50 text-blue-700 hover:bg-blue-50">
+        {pagination.total} disponibles
+      </Badge>
+      <Button
+        class="gap-2 rounded-xl bg-blue-600 text-white hover:bg-blue-700"
+        href="/admin/create-event"
+      >
+        <Plus class="h-4 w-4" />
+        Crear
+      </Button>
+    </div>
   </div>
 
   <div class="mt-4 grid gap-3 sm:grid-cols-4">
     <Input
+      id="admin-events-search"
+      name="event_search"
+      aria-label="Buscar eventos"
       class="h-11 rounded-2xl sm:col-span-2"
       placeholder="Buscar por nombre..."
       bind:value={filters.q}
       onkeydown={(e) => e.key === "Enter" && search()}
     />
     <select
+      id="admin-events-category-filter"
+      name="category_filter"
+      aria-label="Filtrar por categoría"
       class="h-11 w-full rounded-2xl border px-3"
       bind:value={filters.category}
     >
@@ -646,6 +697,9 @@
     </select>
     <div class="flex gap-2 sm:col-span-1">
       <select
+        id="admin-events-status-filter"
+        name="status_filter"
+        aria-label="Filtrar por estatus"
         class="h-11 w-full rounded-2xl border px-3"
         bind:value={filters.status}
       >
@@ -793,18 +847,20 @@
       {:else}
         <div class="grid gap-4 py-2 sm:grid-cols-2">
           <div class="space-y-2 sm:col-span-2">
-            <Label>Título *</Label>
-            <Input bind:value={editForm.title} />
+            <Label for="edit-event-title">Título *</Label>
+            <Input id="edit-event-title" name="title" bind:value={editForm.title} />
           </div>
 
           <div class="space-y-2 sm:col-span-2">
-            <Label>Descripción</Label>
-            <Textarea class="min-h-[100px]" bind:value={editForm.description} />
+            <Label for="edit-event-description">Descripción</Label>
+            <Textarea id="edit-event-description" name="description" class="min-h-[100px]" bind:value={editForm.description} />
           </div>
 
           <div class="space-y-2 sm:col-span-2">
-            <Label>URL de imagen</Label>
+            <Label for="edit-event-cover-url">URL de imagen</Label>
             <Input
+              id="edit-event-cover-url"
+              name="cover_image_url"
               bind:value={editForm.coverImageUrl}
               placeholder="https://ejemplo.com/portada.jpg"
             />
@@ -834,16 +890,20 @@
           {/if}
 
           <div class="space-y-2 sm:col-span-2">
-            <Label>Ubicación *</Label>
+            <Label for="edit-event-location">Ubicación *</Label>
             <Input
+              id="edit-event-location"
+              name="location"
               bind:value={editForm.location}
               placeholder="Auditorio Principal o URL"
             />
           </div>
 
           <div class="space-y-2 sm:col-span-2">
-            <Label>Organizador *</Label>
+            <Label for="edit-event-organizer">Organizador *</Label>
             <Input
+              id="edit-event-organizer"
+              name="organizer"
               bind:value={editForm.organizer}
               placeholder="Ej. Coordinación Académica"
             />
@@ -854,8 +914,10 @@
               Asignación staff (solo selección de existente)
             </div>
             <div class="mt-2 space-y-2">
-              <Label>Usuario staff</Label>
+              <Label for="edit-event-staff-user">Usuario staff</Label>
               <select
+                id="edit-event-staff-user"
+                name="staff_user_id"
                 class="h-10 w-full rounded-md border px-3"
                 bind:value={editSelectedStaffUserId}
                 disabled={staffUsersLoading}
@@ -913,13 +975,13 @@
           {/if}
 
           <div class="space-y-2">
-            <Label>Inicio *</Label>
-            <Input type="datetime-local" bind:value={editForm.startsAt} />
+            <Label for="edit-event-start">Inicio *</Label>
+            <Input id="edit-event-start" name="starts_at" type="datetime-local" min={minimumEventDatetime} bind:value={editForm.startsAt} />
           </div>
 
           <div class="space-y-2">
-            <Label>Fin *</Label>
-            <Input type="datetime-local" bind:value={editForm.endsAt} />
+            <Label for="edit-event-end">Fin *</Label>
+            <Input id="edit-event-end" name="ends_at" type="datetime-local" min={editForm.startsAt || minimumEventDatetime} bind:value={editForm.endsAt} />
           </div>
 
           <div class="space-y-2 sm:col-span-2">
@@ -932,30 +994,39 @@
                   Si está desactivado, el evento tendrá cupo abierto.
                 </div>
               </div>
-              <Switch bind:checked={editForm.capacityEnabled} />
+              <Switch aria-label="Limitar cupo" bind:checked={editForm.capacityEnabled} />
             </div>
           </div>
 
           <div class="space-y-2">
-            <Label>Horas acreditables</Label>
-            <Input
+            <Label for="edit-event-hours">Horas acreditables</Label>
+            <input
+              id="edit-event-hours"
+              name="hours_value"
+              class="border-input bg-background flex h-10 w-full rounded-md border px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
               type="number"
               min="0"
-              step="0.25"
-              bind:value={editForm.hoursValue}
+              max={MAX_EVENT_HOURS}
+              step="0.01"
+              inputmode="decimal"
+              autocomplete="off"
+              value={editForm.hoursValue}
+              oninput={handleEditHoursInput}
             />
           </div>
 
           {#if editForm.capacityEnabled}
             <div class="space-y-2">
-              <Label>Cupo</Label>
-              <Input type="number" min="1" bind:value={editForm.cupo} />
+              <Label for="edit-event-capacity">Cupo</Label>
+              <Input id="edit-event-capacity" name="capacity" type="number" min="1" bind:value={editForm.cupo} />
             </div>
           {/if}
 
           <div class="space-y-2">
-            <Label>Estatus</Label>
+            <Label for="edit-event-status">Estatus</Label>
             <select
+              id="edit-event-status"
+              name="status"
               class="h-10 w-full rounded-md border px-3"
               bind:value={editForm.status}
             >
@@ -967,12 +1038,14 @@
           </div>
 
           <div class="space-y-2">
-            <Label>Categoría</Label>
+            <Label for="edit-event-category">Categoría</Label>
             <div class="relative">
               <span class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
                 <svelte:component this={selectedEditCategoryIcon} class="h-4 w-4" />
               </span>
               <select
+                id="edit-event-category"
+                name="category"
                 class="h-10 w-full rounded-md border pl-10 pr-3"
                 bind:value={editForm.category}
               >
@@ -984,8 +1057,10 @@
           </div>
 
           <div class="space-y-2">
-            <Label>Modo de registro</Label>
+            <Label for="edit-event-registration-mode">Modo de registro</Label>
             <select
+              id="edit-event-registration-mode"
+              name="registration_mode"
               class="h-10 w-full rounded-md border px-3"
               bind:value={editForm.registrationMode}
             >
@@ -995,8 +1070,10 @@
           </div>
 
           <div class="space-y-2">
-            <Label>Reenvío de requisitos</Label>
+            <Label for="edit-event-resubmission-policy">Reenvío de requisitos</Label>
             <select
+              id="edit-event-resubmission-policy"
+              name="resubmission_policy"
               class="h-10 w-full rounded-md border px-3"
               bind:value={editForm.resubmissionPolicy}
             >
@@ -1009,8 +1086,10 @@
           </div>
 
           <div class="space-y-2">
-            <Label>Política de cancelación</Label>
+            <Label for="edit-event-cancel-policy">Política de cancelación</Label>
             <select
+              id="edit-event-cancel-policy"
+              name="cancel_policy"
               class="h-10 w-full rounded-md border px-3"
               bind:value={editForm.cancelPolicy}
             >
@@ -1039,14 +1118,14 @@
             class="sm:col-span-2 flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3"
           >
             <div class="text-sm font-semibold">Permitir self check-in</div>
-            <Switch bind:checked={editForm.allowSelfCheckin} />
+            <Switch aria-label="Permitir self check-in" bind:checked={editForm.allowSelfCheckin} />
           </div>
 
           <div
             class="sm:col-span-2 flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3"
           >
             <div class="text-sm font-semibold">Geocerca obligatoria</div>
-            <Switch bind:checked={editForm.geoEnforced} />
+            <Switch aria-label="Geocerca obligatoria" bind:checked={editForm.geoEnforced} />
           </div>
 
           {#if editForm.geoEnforced}

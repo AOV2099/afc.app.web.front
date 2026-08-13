@@ -28,8 +28,28 @@
 
 	let sheetOpen = false;
 	let selectedEvent = null;
+	let registrationsByEventId = {};
 
-	function openEventDetail(item) {
+	async function openEventDetail(item) {
+		const currentRegistration = getRegistrationForEvent(item?.id);
+		if (currentRegistration) {
+			try {
+				const refreshed = await publicEventsApi.getEventTicket(item.id);
+				registrationsByEventId = {
+					...registrationsByEventId,
+					[String(item.id)]: {
+						...currentRegistration,
+						registration: refreshed?.registration || currentRegistration.registration,
+						pending_approval: Boolean(refreshed?.pending_approval),
+						ticket: refreshed?.ticket || null
+					}
+				};
+			} catch {
+				// Keep the state loaded with the page if the refresh is temporarily unavailable.
+			}
+		}
+
+		const state = getEventSheetState(item);
 		selectedEvent = {
 			id: item.id,
 			coverImageUrl: item.img,
@@ -43,8 +63,9 @@
 			speakerName: 'Organizador',
 			speakerRole: item.organizer || 'Sin organizador',
 			aboutText: item.description || 'Sin descripción',
-			primaryLabel: 'Inscribirse ahora',
-			primaryDisabled: false,
+			primaryLabel: state.label,
+			primaryDisabled: state.disabled,
+			primaryAction: state.action,
 			availabilityLabel: item.availabilityLabel || ''
 		};
 
@@ -86,6 +107,31 @@
 		return false;
 	}
 
+	function getRegistrationForEvent(eventId) {
+		return registrationsByEventId?.[String(eventId)] || null;
+	}
+
+	function getEventSheetState(item) {
+		const entry = getRegistrationForEvent(item?.id);
+		const registrationStatus = normalizeStatus(entry?.registration?.status);
+		const ticketStatus = normalizeStatus(entry?.ticket?.status);
+
+		if (registrationStatus === 'approved' && ticketStatus === 'used') {
+			return { label: 'Asistencia registrada', disabled: true, action: 'none' };
+		}
+		if (registrationStatus === 'approved' && entry?.ticket) {
+			return { label: 'Ver ticket', disabled: false, action: 'view_ticket' };
+		}
+		if (registrationStatus === 'pending') {
+			return { label: 'Inscripción pendiente', disabled: true, action: 'none' };
+		}
+		if (registrationStatus === 'cancel_pending') {
+			return { label: 'Baja en revisión', disabled: true, action: 'none' };
+		}
+
+		return { label: 'Inscribirse ahora', disabled: false, action: 'register' };
+	}
+
 	function toDayKey(date) {
 		if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
 		return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -119,6 +165,12 @@
 		return `${dayLabel} · ${startHour}`;
 	}
 
+	function formatEventDay(date) {
+		const day = date.toLocaleDateString('es-MX', { day: '2-digit' });
+		const month = date.toLocaleDateString('es-MX', { month: 'long' });
+		return `${day} de ${month}`;
+	}
+
 	async function loadUpcomingRegisteredEvents() {
 		nextEventsLoading = true;
 		nextEventsError = '';
@@ -135,6 +187,12 @@
 				totalPages = Number(res?.pagination?.totalPages || 1) || 1;
 				page += 1;
 			} while (page <= totalPages);
+
+			registrationsByEventId = all.reduce((acc, entry) => {
+				const eventId = entry?.event?.id;
+				if (eventId !== undefined && eventId !== null) acc[String(eventId)] = entry;
+				return acc;
+			}, {});
 
 			const now = Date.now();
 			const candidates = all
@@ -198,12 +256,7 @@
 		const categoryMeta = getEventCategoryMeta(event?.category || 'general');
 		const startsLabel =
 			startsAt && !Number.isNaN(startsAt.getTime())
-				? startsAt.toLocaleString('es-MX', {
-						day: '2-digit',
-						month: 'short',
-						hour: '2-digit',
-						minute: '2-digit'
-					})
+				? `${formatEventDay(startsAt)} · ${startsAt.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}`
 				: 'Sin fecha';
 
 		return {
@@ -312,7 +365,8 @@
 	}
 
 	async function openTicketDialog(nextEvent) {
-		if (!nextEvent?.eventId) return;
+		const eventId = nextEvent?.eventId ?? nextEvent?.id;
+		if (!eventId) return;
 
 		ticketDialogOpen = true;
 		ticketLoading = true;
@@ -320,7 +374,7 @@
 		selectedTicket = null;
 
 		try {
-			const res = await publicEventsApi.getEventTicket(nextEvent.eventId);
+			const res = await publicEventsApi.getEventTicket(eventId);
 			const ticketCode = res?.ticket?.ticket_code || 'Sin código';
 			const qrDataUrl = ticketCode && ticketCode !== 'Sin código' ? await createTicketQrDataUrl(ticketCode) : null;
 
@@ -396,6 +450,16 @@
 		} finally {
 			registeringFromSheet = false;
 		}
+	}
+
+	async function handleEventSheetPrimary(evt) {
+		if (evt?.primaryAction === 'none') return;
+		if (evt?.primaryAction === 'view_ticket') {
+			sheetOpen = false;
+			await openTicketDialog(evt);
+			return;
+		}
+		await registerFromEventSheet(evt);
 	}
 
 	onMount(() => {
@@ -505,6 +569,10 @@
 				{#each recommendedEvents as r (r.id)}
 					<Card
 						onclick={() => openEventDetail(r)}
+						onkeydown={(event) => event.key === 'Enter' && openEventDetail(r)}
+						role="button"
+						tabindex="0"
+						aria-label={`Ver evento: ${r.title}`}
 						class="w-[260px] overflow-hidden rounded-2xl border pt-0 sm:w-[290px]"
 					>
 						<div
@@ -614,5 +682,5 @@
 <EventDetailSheet
   bind:open={sheetOpen}
   event={selectedEvent}
-	onPrimary={registerFromEventSheet}
+	onPrimary={handleEventSheetPrimary}
   />

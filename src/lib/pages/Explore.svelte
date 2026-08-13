@@ -77,7 +77,7 @@
     const capacity = hasCapacity ? Number(rawCapacity) || 0 : null;
     const registrationsCount = Number(event?.registrations_count ?? event?.attributes?.registrations_count ?? 0) || 0;
     const startsLabel = startsAt && !Number.isNaN(startsAt.getTime())
-      ? startsAt.toLocaleString('es-MX', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
+      ? `${startsAt.toLocaleDateString('es-MX', { day: '2-digit' })} de ${startsAt.toLocaleDateString('es-MX', { month: 'long' })} · ${startsAt.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}`
       : 'Sin fecha';
 
     return {
@@ -559,9 +559,6 @@
           event: res?.event || { id: evt.id },
           ticket: res?.ticket || null
         });
-
-        const current = upcoming.find((item) => item.id === evt.id)?.registrationsCount ?? 0;
-        setEventRegistrationsCount(evt.id, Math.max(Number(current) - 1, 0));
       } else {
         removeRegistrationState(evt.id);
         const current = upcoming.find((item) => item.id === evt.id)?.registrationsCount ?? 0;
@@ -747,11 +744,14 @@
       </p>
 
       <div class="mt-5 grid grid-cols-2 gap-3">
-        <Dialog.Close asChild>
-          <Button variant="secondary" class="w-full rounded-xl" disabled={Boolean(unsubscribingEventId)}>
-            Cancelar
-          </Button>
-        </Dialog.Close>
+        <Button
+          variant="secondary"
+          class="w-full rounded-xl"
+          disabled={Boolean(unsubscribingEventId)}
+          onclick={() => (unsubscribeDialogOpen = false)}
+        >
+          Cancelar
+        </Button>
         <Button
           class="w-full rounded-xl bg-red-600 text-white hover:bg-red-700"
           disabled={Boolean(unsubscribingEventId)}
@@ -791,9 +791,13 @@
       </div>
 
       <div class="mt-5 grid grid-cols-2 gap-3">
-        <Dialog.Close asChild>
-          <Button variant="secondary" class="w-full rounded-xl">Cerrar</Button>
-        </Dialog.Close>
+        <Button
+          variant="secondary"
+          class="w-full rounded-xl"
+          onclick={() => (ticketDialogOpen = false)}
+        >
+          Cerrar
+        </Button>
         <Button class="w-full rounded-xl bg-blue-600 text-white hover:bg-blue-700" onclick={downloadTicketImage}>
           <Download class="mr-2 h-4 w-4" />
           Descargar

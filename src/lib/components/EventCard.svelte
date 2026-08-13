@@ -45,6 +45,7 @@
 <Card
   class={cn("overflow-hidden rounded-2xl border pt-0", currentVariant.card)}
   role="button"
+  aria-label={variant === "featured" ? `Ver evento destacado: ${event.title}` : `Ver evento: ${event.title}`}
   tabindex="0"
   onclick={handleClick}
   onkeydown={handleKeydown}

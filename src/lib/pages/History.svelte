@@ -74,6 +74,8 @@
 
   function wasTicketScanned(item) {
     const result = String(item?.checkinResult || '').trim().toLowerCase();
+    const reason = String(item?.reason || '').trim().toLowerCase();
+    if (reason === 'checkin' && Number(item?.hoursDelta) > 0) return true;
     return (
       result === 'accepted' ||
       result === 'used' ||
@@ -92,12 +94,10 @@
   function toShortDateTime(value) {
     const date = value ? new Date(value) : null;
     if (!date || Number.isNaN(date.getTime())) return 'Sin fecha';
-    return date.toLocaleString('es-MX', {
-      day: '2-digit',
-      month: 'short',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
+    const day = date.toLocaleDateString('es-MX', { day: '2-digit' });
+    const month = date.toLocaleDateString('es-MX', { month: 'long' });
+    const time = date.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+    return `${day} de ${month} · ${time}`;
   }
 
   function toRelativeDate(value) {
@@ -181,7 +181,14 @@
       const mapped = (Array.isArray(res?.history) ? res.history : []).map(mapHoursEntryToItem);
       items = append ? [...items, ...mapped] : mapped;
 
-      totalHours = Number(res?.total_hours ?? 0) || 0;
+      const responseTotalHours = Number(res?.total_hours);
+      const loadedHours = items.reduce(
+        (sum, item) => sum + (Number(item?.hoursDelta ?? 0) || 0),
+        0
+      );
+      totalHours = Number.isFinite(responseTotalHours) && (responseTotalHours !== 0 || loadedHours === 0)
+        ? responseTotalHours
+        : loadedHours;
 
       pagination = {
         page: Number(res?.pagination?.page ?? 1) || 1,
@@ -298,7 +305,7 @@
         <div>
           <span class="text-sm text-muted-foreground">Eventos registrados: </span>
           <span class="inline-flex items-center rounded-lg bg-blue-100 px-2 py-1 text-xs font-semibold text-blue-700">
-            {items.length}
+            {pagination.total}
           </span>
         </div>
       </div>
