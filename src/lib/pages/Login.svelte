@@ -8,7 +8,7 @@
 	import { Label } from '$lib/components/ui/label';
 	import { Separator } from '$lib/components/ui/separator';
 	import { authApi, clearClientRole, getHomePathByRole } from '$lib/services/api';
-	import { GOOGLE_CLIENT_ID } from '$lib/services/config';
+	import { GOOGLE_AUTH_MODE, GOOGLE_CLIENT_ID } from '$lib/services/config';
 	import { loadGoogleIdentityServices, requestGoogleAuthorizationCode } from '$lib/services/googleAuth';
 	import { setCurrentUser } from '../../routes/store';
 
@@ -20,10 +20,11 @@
 
 	let loading = false;
 	let googleLoading = false;
-	let googleInitializing = Boolean(GOOGLE_CLIENT_ID);
+	let googleInitializing = GOOGLE_AUTH_MODE === 'direct' && Boolean(GOOGLE_CLIENT_ID);
 	let error = '';
 
 	onMount(() => {
+		if (GOOGLE_AUTH_MODE === 'bridge') return;
 		if (!GOOGLE_CLIENT_ID) return;
 
 		loadGoogleIdentityServices()
@@ -69,6 +70,16 @@
 		error = '';
 
 		try {
+			if (GOOGLE_AUTH_MODE === 'bridge') {
+				const response = await authApi.startGoogleBridge();
+				const authorizationUrl = String(response?.authorization_url || '').trim();
+				if (!authorizationUrl.startsWith('https://')) {
+					throw new Error('El servicio de acceso seguro devolvió una URL inválida.');
+				}
+				window.location.assign(authorizationUrl);
+				return;
+			}
+
 			const code = await requestGoogleAuthorizationCode(GOOGLE_CLIENT_ID);
 			const res = await authApi.loginWithGoogle(code);
 			await finishLogin(res);

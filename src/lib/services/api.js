@@ -39,17 +39,18 @@ function redirectToLoginIfUnauthorized(status, message = '') {
 }
 
 async function apiFetch(path, options = {}) {
+	const { skipAuthRedirect = false, ...fetchOptions } = options;
 	const response = await fetch(`${API_BASE_URL}${path}`, {
 		credentials: 'include',
-		headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
-		...options
+		headers: { 'Content-Type': 'application/json', ...(fetchOptions.headers || {}) },
+		...fetchOptions
 	});
 
 	const data = await response.json().catch(() => null);
 
 	if (!response.ok) {
 		const message = data?.message || `Request failed (${response.status})`;
-		redirectToLoginIfUnauthorized(response.status, message);
+		if (!skipAuthRedirect) redirectToLoginIfUnauthorized(response.status, message);
 		const error = new Error(message);
 		error.status = response.status;
 		error.data = data;
@@ -81,6 +82,17 @@ export const authApi = {
 	loginWithGoogle(code) {
 		return apiFetch('/api/auth/google', {
 			method: 'POST',
+			body: JSON.stringify({ code })
+		});
+	},
+	startGoogleBridge() {
+		return apiFetch('/api/auth/google/bridge/start', { method: 'POST' });
+	},
+	completeGoogleBridge(code, { signal } = {}) {
+		return apiFetch('/api/auth/google/bridge/complete', {
+			method: 'POST',
+			skipAuthRedirect: true,
+			signal,
 			body: JSON.stringify({ code })
 		});
 	},
