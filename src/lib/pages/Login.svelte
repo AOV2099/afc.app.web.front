@@ -8,7 +8,7 @@
 	import { Label } from '$lib/components/ui/label';
 	import { Separator } from '$lib/components/ui/separator';
 	import { authApi, clearClientRole, getHomePathByRole } from '$lib/services/api';
-	import { GOOGLE_CLIENT_ID } from '$lib/services/config';
+	import { GOOGLE_AUTH_MODE, GOOGLE_CLIENT_ID } from '$lib/services/config';
 	import { loadGoogleIdentityServices, requestGoogleAuthorizationCode } from '$lib/services/googleAuth';
 	import { setCurrentUser } from '../../routes/store';
 
@@ -20,10 +20,31 @@
 
 	let loading = false;
 	let googleLoading = false;
-	let googleInitializing = Boolean(GOOGLE_CLIENT_ID);
+	let googleInitializing = GOOGLE_AUTH_MODE === 'direct' && Boolean(GOOGLE_CLIENT_ID);
 	let error = '';
 
 	onMount(() => {
+		const oauthError = new URL(window.location.href).searchParams.get('oauth_error');
+		const oauthMessages = {
+			access_denied: 'Cancelaste el inicio de sesión con Google.',
+			invalid_state: 'El intento de acceso expiró o ya fue utilizado. Intenta nuevamente.',
+			invalid_callback: 'Google devolvió una respuesta incompleta.',
+			redirect_uri_mismatch: 'La URL de retorno no coincide con Google Cloud.',
+			user_disabled: 'El usuario se encuentra deshabilitado. Consulta a un administrador.',
+			domain_forbidden: 'Debes utilizar una cuenta del dominio institucional autorizado.',
+			account_conflict: 'El correo ya está vinculado con otra cuenta de acceso.',
+			session_error: 'No se pudo crear la sesión. Intenta nuevamente.',
+			google_error: 'Google no pudo completar la autenticación.'
+		};
+
+		if (oauthError) {
+			error = oauthMessages[oauthError] || 'No se pudo completar el inicio de sesión con Google.';
+			const cleanUrl = new URL(window.location.href);
+			cleanUrl.searchParams.delete('oauth_error');
+			window.history.replaceState({}, document.title, cleanUrl.pathname + cleanUrl.search);
+		}
+
+		if (GOOGLE_AUTH_MODE === 'gateway') return;
 		if (!GOOGLE_CLIENT_ID) return;
 
 		loadGoogleIdentityServices()
@@ -69,6 +90,11 @@
 		error = '';
 
 		try {
+			if (GOOGLE_AUTH_MODE === 'gateway') {
+				window.location.assign('/auth/google');
+				return;
+			}
+
 			const code = await requestGoogleAuthorizationCode(GOOGLE_CLIENT_ID);
 			const res = await authApi.loginWithGoogle(code);
 			await finishLogin(res);
