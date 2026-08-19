@@ -5,8 +5,6 @@
 	"type": "module",
 	"scripts": {
 		"dev": "vite dev --host",
-		"gateway": "node gateway/server.js",
-		"test:gateway": "node --test gateway/*.test.js",
 		"build": "vite build",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
@@ -52,7 +50,6 @@
 	},
 	"dependencies": {
 		"html-to-image": "^1.11.13",
-		"http-proxy": "^1.18.1",
 		"lucide-svelte": "^0.562.0",
 		"qr-scanner": "^1.4.2",
 		"qrcode": "^1.5.4",

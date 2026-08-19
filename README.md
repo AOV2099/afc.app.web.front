@@ -2,4 +2,4 @@ Front para actividades de formación complementaria
 
 ## Login con Google mediante gateway HTTPS
 
-Consulta [docs/google-login-ngrok.md](docs/google-login-ngrok.md) para levantar el gateway `3010`, configurar ngrok y registrar el callback en Google Cloud.
+El gateway `3010` y su documentación se administran desde el repositorio AFC Back. AFC Front conserva únicamente la interfaz y el modo runtime `PUBLIC_GOOGLE_AUTH_MODE=gateway`.
