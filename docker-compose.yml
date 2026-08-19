@@ -12,7 +12,7 @@ services:
       - PUBLIC_API_BASE_URL=${PUBLIC_API_BASE_URL:-}
       - PUBLIC_GOOGLE_CLIENT_ID=${PUBLIC_GOOGLE_CLIENT_ID:-}
       - PUBLIC_GOOGLE_AUTH_MODE=${PUBLIC_GOOGLE_AUTH_MODE:-direct}
-      - AFC_BACKEND_URL=${AFC_BACKEND_URL:-}
+      - AFC_BACKEND_URL=${AFC_BACKEND_URL:-http://afc-back:3000}
     restart: unless-stopped
     # Descomentar si necesitas variables de entorno personalizadas
     # env_file:

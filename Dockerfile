@@ -49,7 +49,7 @@ ENV HOST=0.0.0.0
 ENV PUBLIC_API_BASE_URL=""
 ENV PUBLIC_GOOGLE_CLIENT_ID=""
 ENV PUBLIC_GOOGLE_AUTH_MODE="direct"
-ENV AFC_BACKEND_URL=""
+ENV AFC_BACKEND_URL="http://afc-back:3000"
 
 # Comando para ejecutar la aplicación
 CMD ["node", "build"]
