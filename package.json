@@ -10,6 +10,7 @@
 		"prepare": "svelte-kit sync || echo ''",
 		"format": "prettier --write .",
 		"lint": "prettier --check .",
+		"test:unit": "node --test tests/*.test.js",
 		"test:e2e": "playwright test",
 		"test:e2e:events": "playwright test tests/e2e/events-crud.spec.js",
 		"test:e2e:enrollment": "playwright test tests/e2e/event-enrollment.spec.js",

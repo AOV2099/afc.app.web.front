@@ -1,6 +1,8 @@
 <script>
-  import AdminUsers from "$lib/pages/AdminUsers.svelte";
+  import AdminUsers from '$lib/pages/AdminUsers.svelte';
 
+  export let data;
 </script>
-<AdminUsers></AdminUsers>
+
+<AdminUsers currentUser={data.user} />
 

@@ -33,6 +33,8 @@
 			user_disabled: 'El usuario se encuentra deshabilitado. Consulta a un administrador.',
 			domain_forbidden: 'Debes utilizar una cuenta del dominio institucional autorizado.',
 			account_conflict: 'El correo ya está vinculado con otra cuenta de acceso.',
+			not_provisioned: 'Tu cuenta aún no ha sido dada de alta. Contacta a un administrador.',
+			not_authorized: 'Tu cuenta no está autorizada para ingresar. Contacta a un administrador.',
 			session_error: 'No se pudo crear la sesión. Intenta nuevamente.',
 			google_error: 'Google no pudo completar la autenticación.'
 		};
