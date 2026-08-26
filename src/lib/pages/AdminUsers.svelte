@@ -10,9 +10,16 @@
 		validateStudentCsvFile,
 		validateStudentCsvText
 	} from '$lib/services/studentCsvImport';
+	import {
+		buildAdminUserCreatePayload,
+		buildAdminUserEditPayload,
+		getAdminCareerScope,
+		normalizeAdminStudentId,
+		positiveCareerId
+	} from '$lib/services/adminUserCareerScope';
 	import { USER_STATUS_CATALOG } from '../../routes/store';
 
-	import { Card, CardContent, CardHeader, CardTitle } from '$lib/components/ui/card';
+	import { Card, CardContent } from '$lib/components/ui/card';
 	import { Button } from '$lib/components/ui/button';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Input } from '$lib/components/ui/input';
@@ -63,9 +70,11 @@
 	let statusFilter = 'all';
 	let filtersReady = false;
 	let filtersTimeout;
+	let filtersKey = '';
+	let loadedFiltersKey = '';
 
 	let page = 1;
-	let pageSize = 20;
+	let pageSize = 50;
 	let total = 0;
 	let totalPages = 1;
 
@@ -106,41 +115,58 @@
 	let commitRequestId = 0;
 	let currentCareerId = null;
 	let isGlobalAdmin = false;
+	let isScopedAdmin = false;
+	let hasCareerAdminAccess = false;
 	let academicCareers = [];
 	let scopedCareerName = '';
+	let currentAdminCareerName = '';
+	let accessDisabledMessage = '';
 	let importDisabledMessage = '';
 	let canImportStudents = false;
+	let adminCareerScope = null;
 
 	const roleOptions = ['admin', 'staff', 'student', 'auditor'];
 	const statusOptions = Object.keys(USER_STATUS_CATALOG);
+	const pageSizeOptions = [10, 25, 50, 100];
+	const defaultPageSize = 50;
+	const pageSizeStorageKey = 'afc.admin.users.pageSize';
 
-	function positiveInteger(value) {
-		if (value === null || value === undefined || String(value).trim() === '') return null;
+	function normalizePageSize(value) {
 		const parsed = Number(value);
-		return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+		return pageSizeOptions.includes(parsed) ? parsed : defaultPageSize;
 	}
 
-	function careerNameById(careerId) {
-		const career = careers.find((item) => Number(item.id) === Number(careerId));
+	function careerNameById(careerId, availableCareers = careers, user = currentUser) {
+		const career = availableCareers.find((item) => Number(item.id) === Number(careerId));
 		return (
 			career?.name ||
-			(Number(careerId) === currentCareerId ? currentUser?.career_name : '') ||
+			(Number(careerId) === currentCareerId
+				? user?.career_name || user?.career?.name
+				: '') ||
 			`Carrera ${careerId}`
 		);
 	}
 
-	$: currentCareerId = positiveInteger(currentUser?.career_id ?? currentUser?.career?.id);
-	$: isGlobalAdmin = String(currentUser?.role || '').toLowerCase() === 'admin' && currentCareerId === 1;
+	$: adminCareerScope = getAdminCareerScope(currentUser);
+	$: currentCareerId = adminCareerScope.careerId;
+	$: isGlobalAdmin = adminCareerScope.isGlobalAdmin;
+	$: isScopedAdmin = adminCareerScope.isScopedAdmin;
+	$: hasCareerAdminAccess = adminCareerScope.hasCareerAdminAccess;
 	$: academicCareers = careers.filter((career) => Number(career.id) > 1);
-	$: scopedCareerName = currentCareerId && currentCareerId > 1 ? careerNameById(currentCareerId) : '';
-	$: importDisabledMessage =
+	$: scopedCareerName =
+		currentCareerId && currentCareerId > 1
+			? careerNameById(currentCareerId, careers, currentUser)
+			: '';
+	$: currentAdminCareerName = currentCareerId
+		? careerNameById(currentCareerId, careers, currentUser)
+		: 'Sin carrera válida';
+	$: accessDisabledMessage =
 		String(currentUser?.role || '').toLowerCase() !== 'admin'
-			? 'Solo los administradores pueden importar estudiantes.'
+			? 'Solo los administradores pueden administrar usuarios.'
 			: currentCareerId === null
-				? 'Asigna una carrera al administrador antes de importar estudiantes.'
-				: currentCareerId < 1
-					? 'El administrador no tiene una carrera válida para importar.'
-					: '';
+				? 'Tu sesión no incluye una carrera válida. Vuelve a iniciar sesión para administrar usuarios.'
+				: '';
+	$: importDisabledMessage = accessDisabledMessage;
 	$: canImportStudents = !importDisabledMessage;
 
 	let createForm = {
@@ -224,13 +250,14 @@
 			firstName: '',
 			lastName: '',
 			studentId: '',
-			careerId: '',
+			careerId: isScopedAdmin ? String(currentCareerId) : '',
 			status: 'active',
 			role: 'student'
 		};
 	}
 
 	function openCreateUser() {
+		if (!hasCareerAdminAccess) return;
 		formError = '';
 		resetCreateForm();
 		showCreatePassword = false;
@@ -239,6 +266,7 @@
 	}
 
 	function openEditUser(user) {
+		if (!hasCareerAdminAccess) return;
 		selectedUser = user;
 		formError = '';
 		editForm = {
@@ -254,10 +282,11 @@
 	}
 
 	function normalizeStudentId(value) {
-		return String(value || '').slice(0, 10);
+		return normalizeAdminStudentId(value);
 	}
 
 	function openPasswordUser(user) {
+		if (!hasCareerAdminAccess) return;
 		passwordUser = user;
 		passwordError = '';
 		passwordForm = { newPassword: '', confirmPassword: '' };
@@ -360,7 +389,7 @@
 			importFormError = fileError;
 			return;
 		}
-		if (isGlobalAdmin && (positiveInteger(importTargetCareerId) === null || Number(importTargetCareerId) <= 1)) {
+		if (isGlobalAdmin && (positiveCareerId(importTargetCareerId) === null || Number(importTargetCareerId) <= 1)) {
 			importFormError = 'Selecciona la carrera destino.';
 			return;
 		}
@@ -448,35 +477,18 @@
 	}
 
 	function toUserPayload(form) {
-		return {
-			email: form.email.trim(),
-			password: form.password,
-			firstName: form.firstName.trim(),
-			lastName: form.lastName.trim(),
-			studentId: normalizeStudentId(form.studentId).trim() || undefined,
-			career_id: form.careerId ? Number(form.careerId) : undefined,
-			status: form.status,
-			role: normalizeRoleInput(form.role)
-		};
+		return buildAdminUserCreatePayload(
+			{ ...form, role: normalizeRoleInput(form.role) },
+			{ isGlobalAdmin, currentCareerId }
+		);
 	}
 
 	function getEditPayload() {
-		const payload = {};
-		if (!selectedUser) return payload;
-
-		if (editForm.email.trim() !== (selectedUser.email || '')) payload.email = editForm.email.trim();
-		if (editForm.firstName.trim() !== (selectedUser.first_name || '')) payload.firstName = editForm.firstName.trim();
-		if (editForm.lastName.trim() !== (selectedUser.last_name || '')) payload.lastName = editForm.lastName.trim();
-		if (normalizeStudentId(editForm.studentId).trim() !== normalizeStudentId(selectedUser.student_id).trim()) {
-			payload.studentId = normalizeStudentId(editForm.studentId).trim();
-		}
-		if (editForm.careerId !== resolveUserCareerId(selectedUser)) {
-			payload.career_id = editForm.careerId ? Number(editForm.careerId) : null;
-		}
-		if (editForm.status !== (selectedUser.status || 'active')) payload.status = editForm.status;
-		if (editForm.role !== (selectedUser.role || 'student')) payload.role = editForm.role;
-
-		return payload;
+		return buildAdminUserEditPayload({
+			form: editForm,
+			selectedUser,
+			isGlobalAdmin
+		});
 	}
 
 	async function loadCareers() {
@@ -518,6 +530,7 @@
 	}
 
 	async function submitCreateUser() {
+		if (!hasCareerAdminAccess) return;
 		formError = '';
 		submitting = true;
 
@@ -532,7 +545,7 @@
 			if (!payload.role) {
 				throw new Error('Debes seleccionar un rol.');
 			}
-			if (payload.role === 'student' && !createForm.careerId) {
+			if (payload.role === 'student' && !payload.career_id) {
 				throw new Error('Para usuarios estudiante, la carrera es obligatoria.');
 			}
 			if (createForm.password !== createForm.confirmPassword) {
@@ -552,7 +565,7 @@
 	}
 
 	async function submitEditUser() {
-		if (!selectedUser) return;
+		if (!selectedUser || !hasCareerAdminAccess) return;
 		formError = '';
 		submitting = true;
 
@@ -581,7 +594,7 @@
 	}
 
 	async function submitUserPassword() {
-		if (!passwordUser) return;
+		if (!passwordUser || !hasCareerAdminAccess) return;
 		passwordError = '';
 		passwordSubmitting = true;
 
@@ -610,8 +623,18 @@
 		}
 	}
 
-	function onSearchSubmit() {
+	function handlePageSizeChange(event) {
+		const nextPageSize = normalizePageSize(event.currentTarget?.value);
+		pageSize = nextPageSize;
 		page = 1;
+		clearTimeout(filtersTimeout);
+
+		try {
+			window.localStorage.setItem(pageSizeStorageKey, String(nextPageSize));
+		} catch {
+			// La preferencia no es crítica si el almacenamiento del navegador no está disponible.
+		}
+
 		loadUsers();
 	}
 
@@ -636,6 +659,13 @@
 	}
 
 	onMount(() => {
+		try {
+			pageSize = normalizePageSize(window.localStorage.getItem(pageSizeStorageKey));
+		} catch {
+			pageSize = defaultPageSize;
+		}
+
+		loadedFiltersKey = filtersKey;
 		loadUsers();
 		loadCareers();
 		filtersReady = true;
@@ -645,22 +675,25 @@
 		clearTimeout(filtersTimeout);
 	});
 
-	$: if (filtersReady) {
-		q;
-		roleFilter;
-		statusFilter;
+	$: filtersKey = `${q}\u0000${roleFilter}\u0000${statusFilter}`;
+
+	$: if (filtersReady && filtersKey !== loadedFiltersKey) {
+		loadedFiltersKey = filtersKey;
 		scheduleFiltersLoad();
 	}
 </script>
 
 <div class="min-h-screen bg-background">
 	<!-- Top bar -->
-	<div class="sticky top-0 z-20 border-b bg-background/80 backdrop-blur">
+	<div class="sticky top-0 z-30 border-b bg-background/95 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/85">
 		<div class="mx-auto w-full max-w-screen-lg px-4 py-4 sm:px-6 lg:px-8">
 			<div class="flex flex-wrap items-start justify-between gap-3">
 				<div>
 					<h1 class="text-base font-semibold tracking-tight">Usuarios</h1>
 					<p class="text-sm text-muted-foreground">Formación Complementaria</p>
+					<p class="mt-1 text-xs font-medium text-slate-600">
+						{isGlobalAdmin ? 'Administración global' : 'Carrera administrada'}: {currentAdminCareerName}
+					</p>
 				</div>
 
 				<div class="flex flex-wrap justify-end gap-2">
@@ -687,6 +720,7 @@
 					<Button
 						class="h-11 rounded-2xl bg-blue-600 px-4 text-white shadow-sm hover:bg-blue-700"
 						onclick={openCreateUser}
+						disabled={!hasCareerAdminAccess}
 						aria-label="Crear usuario"
 					>
 						<Plus class="h-4 w-4" />
@@ -696,14 +730,20 @@
 			</div>
 
 			{#if importDisabledMessage}
-				<p id="student-import-disabled-message" class="mt-2 text-right text-xs text-amber-700" role="status">
+				<p
+					id="student-import-disabled-message"
+					class="mt-3 rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800"
+					role="alert"
+				>
 					{importDisabledMessage}
 				</p>
 			{/if}
 
 			<div class="mt-4 space-y-3">
-				<div class="grid gap-3 sm:grid-cols-[1fr_auto_auto_auto]">
-					<div class="relative">
+				<div
+					class="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(9rem,auto)_minmax(10rem,auto)_minmax(8.5rem,auto)]"
+				>
+					<div class="relative sm:col-span-2 lg:col-span-1">
 						<Search class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
 						<Input
 							class="h-11 rounded-2xl bg-background pl-9 shadow-sm"
@@ -713,27 +753,34 @@
 						/>
 					</div>
 
-					<select class="h-11 rounded-2xl border px-3 text-sm" bind:value={roleFilter}>
+					<select class="h-11 w-full rounded-2xl border px-3 text-sm" bind:value={roleFilter}>
 						<option value="all">Todos los roles</option>
 						{#each roleOptions as role}
 							<option value={role}>{formatRole(role)}</option>
 						{/each}
 					</select>
 
-					<select class="h-11 rounded-2xl border px-3 text-sm" bind:value={statusFilter}>
+					<select class="h-11 w-full rounded-2xl border px-3 text-sm" bind:value={statusFilter}>
 						<option value="all">Todos los estatus</option>
 						{#each statusOptions as status}
 							<option value={status}>{formatStatus(status)}</option>
 						{/each}
 					</select>
 
-					<Button
-						type="button"
-						class="h-11 rounded-2xl bg-blue-600 text-white hover:bg-blue-700"
-						onclick={onSearchSubmit}
-					>
-						Buscar
-					</Button>
+					<div class="sm:col-span-2 lg:col-span-1">
+						<Label for="admin-users-page-size" class="sr-only">Registros por página</Label>
+						<select
+							id="admin-users-page-size"
+							class="h-11 w-full rounded-2xl border bg-background px-3 text-sm"
+							value={pageSize}
+							onchange={handlePageSizeChange}
+							aria-label="Registros por página"
+						>
+							{#each pageSizeOptions as option}
+								<option value={option}>{option} por página</option>
+							{/each}
+						</select>
+					</div>
 				</div>
 			</div>
 		</div>
@@ -742,26 +789,7 @@
 	<!-- Content -->
 	<main class="mx-auto w-full max-w-screen-lg px-4 pb-10 pt-6 sm:px-6 lg:px-8">
 		<div class="space-y-6">
-			<!-- KPI -->
-			<div class="grid grid-cols-1 gap-3 sm:grid-cols-2">
-				<Card class={`rounded-3xl border bg-card text-card-foreground ${cardShadow}`}>
-					<CardHeader class="pb-2">
-						<CardTitle class="text-sm font-medium text-muted-foreground">Total Usuarios</CardTitle>
-					</CardHeader>
-					<CardContent>
-						<div class="text-3xl font-semibold tracking-tight">{total}</div>
-						<p class="mt-1 text-xs text-muted-foreground">
-							Mostrando {users.length} {users.length === 1 ? 'resultado' : 'resultados'} en página {page}.
-						</p>
-					</CardContent>
-				</Card>
-
-				<Card class={`hidden rounded-3xl border bg-card text-card-foreground sm:block ${cardShadow}`}>
-					<CardContent class="flex h-full items-center justify-center">
-						<p class="text-sm text-muted-foreground">Espacio para KPI futuro</p>
-					</CardContent>
-				</Card>
-			</div>
+			<!-- KPI de usuarios temporalmente ocultos -->
 
 			<div class="flex items-center justify-between">
 				<p class="text-xs font-semibold tracking-wider text-muted-foreground">RESULTADOS RECIENTES</p>
@@ -769,6 +797,13 @@
 					<Button variant="outline" class="rounded-xl" disabled={page <= 1 || loading} onclick={prevPage}>
 						Anterior
 					</Button>
+					<span
+						class="min-w-24 whitespace-nowrap text-center text-xs font-medium text-muted-foreground"
+						aria-live="polite"
+						aria-atomic="true"
+					>
+						Página {page} de {totalPages}
+					</span>
 					<Button
 						variant="outline"
 						class="rounded-xl"
@@ -814,7 +849,10 @@
 								</TableRow>
 							{:else}
 								{#each users as u (u.id)}
-									<TableRow class="cursor-pointer hover:bg-slate-100/40" onclick={() => openEditUser(u)}>
+									<TableRow
+										class={hasCareerAdminAccess ? 'cursor-pointer hover:bg-slate-100/40' : ''}
+										onclick={() => openEditUser(u)}
+									>
 										<TableCell class="pl-6">
 											<div class="flex items-center gap-3">
 												<Avatar class="h-9 w-9">
@@ -844,6 +882,7 @@
 												variant="ghost"
 												size="icon"
 												class="rounded-full"
+												disabled={!hasCareerAdminAccess}
 												onclick={(event) => {
 													event.stopPropagation();
 													openPasswordUser(u);
@@ -856,6 +895,7 @@
 												variant="ghost"
 												size="icon"
 												class="rounded-full"
+												disabled={!hasCareerAdminAccess}
 												onclick={(event) => {
 													event.stopPropagation();
 													openEditUser(u);
@@ -918,6 +958,7 @@
 										variant="ghost"
 										size="icon"
 										class="rounded-full"
+										disabled={!hasCareerAdminAccess}
 										onclick={(event) => {
 											event.stopPropagation();
 											openPasswordUser(u);
@@ -930,6 +971,7 @@
 										variant="ghost"
 										size="icon"
 										class="rounded-full"
+										disabled={!hasCareerAdminAccess}
 										onclick={(event) => {
 											event.stopPropagation();
 											openEditUser(u);
@@ -1276,12 +1318,19 @@
 
 			<div class="space-y-2 sm:col-span-2">
 				<Label>Carrera</Label>
-				<select class="h-10 w-full rounded-md border px-3" bind:value={createForm.careerId}>
-					<option value="">Sin carrera</option>
-					{#each careers as career (career.id)}
-						<option value={career.id}>{career.name} — {career.faculty}</option>
-					{/each}
-				</select>
+				{#if isGlobalAdmin}
+					<select class="h-10 w-full rounded-md border px-3" bind:value={createForm.careerId}>
+						<option value="">Sin carrera</option>
+						{#each careers as career (career.id)}
+							<option value={career.id}>{career.name} — {career.faculty}</option>
+						{/each}
+					</select>
+				{:else}
+					<div class="rounded-xl border bg-slate-50 px-3 py-2 text-sm font-medium text-slate-800">
+						{scopedCareerName}
+					</div>
+					<p class="text-xs text-muted-foreground">Los usuarios nuevos se asignan automáticamente a tu carrera.</p>
+				{/if}
 			</div>
 
 			<div class="space-y-2">
@@ -1309,7 +1358,11 @@
 
 		<Dialog.Footer>
 			<Button variant="outline" onclick={() => (createOpen = false)} disabled={submitting}>Cancelar</Button>
-			<Button class="bg-blue-600 text-white hover:bg-blue-700" onclick={submitCreateUser} disabled={submitting}>
+			<Button
+				class="bg-blue-600 text-white hover:bg-blue-700"
+				onclick={submitCreateUser}
+				disabled={submitting || !hasCareerAdminAccess}
+			>
 				{submitting ? 'Guardando...' : 'Crear usuario'}
 			</Button>
 		</Dialog.Footer>
@@ -1350,12 +1403,19 @@
 
 			<div class="space-y-2 sm:col-span-2">
 				<Label>Carrera</Label>
-				<select class="h-10 w-full rounded-md border px-3" bind:value={editForm.careerId}>
-					<option value="">Sin carrera</option>
-					{#each careers as career (career.id)}
-						<option value={career.id}>{career.name} — {career.faculty}</option>
-					{/each}
-				</select>
+				{#if isGlobalAdmin}
+					<select class="h-10 w-full rounded-md border px-3" bind:value={editForm.careerId}>
+						<option value="">Sin carrera</option>
+						{#each careers as career (career.id)}
+							<option value={career.id}>{career.name} — {career.faculty}</option>
+						{/each}
+					</select>
+				{:else}
+					<div class="rounded-xl border bg-slate-50 px-3 py-2 text-sm font-medium text-slate-800">
+						{selectedUser ? careerNameById(resolveUserCareerId(selectedUser) || currentCareerId) : scopedCareerName}
+					</div>
+					<p class="text-xs text-muted-foreground">La carrera no puede modificarse desde una administración acotada.</p>
+				{/if}
 			</div>
 
 			<div class="space-y-2">
@@ -1383,7 +1443,11 @@
 
 		<Dialog.Footer>
 			<Button variant="outline" onclick={() => (editOpen = false)} disabled={submitting}>Cancelar</Button>
-			<Button class="bg-blue-600 text-white hover:bg-blue-700" onclick={submitEditUser} disabled={submitting}>
+			<Button
+				class="bg-blue-600 text-white hover:bg-blue-700"
+				onclick={submitEditUser}
+				disabled={submitting || !hasCareerAdminAccess}
+			>
 				{submitting ? 'Guardando...' : 'Guardar cambios'}
 			</Button>
 		</Dialog.Footer>
@@ -1460,7 +1524,7 @@
 			<Button
 				class="bg-amber-600 text-white hover:bg-amber-700"
 				onclick={submitUserPassword}
-				disabled={passwordSubmitting}
+				disabled={passwordSubmitting || !hasCareerAdminAccess}
 			>
 				{passwordSubmitting ? 'Guardando...' : 'Actualizar contraseña'}
 			</Button>
