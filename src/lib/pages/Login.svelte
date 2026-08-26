@@ -12,7 +12,7 @@
 	import { loadGoogleIdentityServices, requestGoogleAuthorizationCode } from '$lib/services/googleAuth';
 	import { setCurrentUser } from '../../routes/store';
 
-	import { GraduationCap, Mail, Lock, Eye, EyeOff, ArrowRight, Plus, LoaderCircle } from 'lucide-svelte';
+	import { GraduationCap, Mail, Lock, Eye, EyeOff, ArrowRight, LoaderCircle } from 'lucide-svelte';
 
 	let email = '';
 	let password = '';
@@ -240,16 +240,7 @@
 		</form>
 
 		<div class="mt-6 space-y-6">
-			<!-- crear una cuenta -->
-			<Button
-				type="button"
-				variant="outline"
-				class="h-16 w-full rounded-2xl border-slate-200 bg-white text-xl font-semibold text-slate-800 shadow-sm hover:bg-slate-50"
-				onclick={() => goto('/register')}
-			>
-				<Plus class="mr-2 h-5 w-5" />
-				Crear una cuenta
-			</Button>
+			<!-- Autoregistro temporalmente deshabilitado -->
 
 			<!-- Google Identity Services: OAuth 2.0 Authorization Code con popup -->
 			<Button
