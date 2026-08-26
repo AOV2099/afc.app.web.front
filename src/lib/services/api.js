@@ -125,6 +125,21 @@ export const adminUsersApi = {
 			method: 'PATCH',
 			body: JSON.stringify(payload)
 		});
+	},
+	previewStudentCsv(csvText, careerId) {
+		return apiFetch(
+			`/api/admin/users/import/preview${toQueryString({ career_id: careerId })}`,
+			{
+				method: 'POST',
+				headers: { 'Content-Type': 'text/csv' },
+				body: String(csvText ?? '')
+			}
+		);
+	},
+	commitStudentCsv(importId) {
+		return apiFetch(`/api/admin/users/import/${encodeURIComponent(importId)}/commit`, {
+			method: 'POST'
+		});
 	}
 };
 
