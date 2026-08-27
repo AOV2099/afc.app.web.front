@@ -68,6 +68,7 @@
 	let q = '';
 	let roleFilter = 'all';
 	let statusFilter = 'all';
+	let careerFilter = 'all';
 	let filtersReady = false;
 	let filtersTimeout;
 	let filtersKey = '';
@@ -168,6 +169,12 @@
 				: '';
 	$: importDisabledMessage = accessDisabledMessage;
 	$: canImportStudents = !importDisabledMessage;
+	$: if (isScopedAdmin && currentCareerId !== null && careerFilter !== String(currentCareerId)) {
+		careerFilter = String(currentCareerId);
+	}
+	$: if (!hasCareerAdminAccess && careerFilter !== 'all') {
+		careerFilter = 'all';
+	}
 
 	let createForm = {
 		email: '',
@@ -233,6 +240,17 @@
 
 	function fullName(u) {
 		return [u.first_name, u.last_name].filter(Boolean).join(' ').trim() || 'Sin nombre';
+	}
+
+	function userCareerName(user) {
+		const name = String(user?.career_name || user?.career?.name || '').trim();
+		if (name) return name;
+		const careerId = positiveCareerId(user?.career_id ?? user?.career?.id);
+		return careerId === null ? 'Sin carrera' : careerNameById(careerId);
+	}
+
+	function userCareerFaculty(user) {
+		return String(user?.career_faculty || user?.career?.faculty || '').trim();
 	}
 
 	function initials(name = '') {
@@ -510,7 +528,8 @@
 				pageSize,
 				q: q.trim() || undefined,
 				status: statusFilter === 'all' ? undefined : statusFilter,
-				role: roleFilter === 'all' ? undefined : roleFilter
+				role: roleFilter === 'all' ? undefined : roleFilter,
+				career_id: careerFilter === 'all' ? undefined : careerFilter
 			});
 
 			if (!res?.ok) {
@@ -675,7 +694,7 @@
 		clearTimeout(filtersTimeout);
 	});
 
-	$: filtersKey = `${q}\u0000${roleFilter}\u0000${statusFilter}`;
+	$: filtersKey = `${q}\u0000${roleFilter}\u0000${statusFilter}\u0000${careerFilter}`;
 
 	$: if (filtersReady && filtersKey !== loadedFiltersKey) {
 		loadedFiltersKey = filtersKey;
@@ -741,16 +760,38 @@
 
 			<div class="mt-4 space-y-3">
 				<div
-					class="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3 lg:grid-cols-[minmax(0,1fr)_minmax(9rem,auto)_minmax(10rem,auto)_minmax(8.5rem,auto)]"
+					class="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3 lg:grid-cols-[minmax(12rem,1fr)_minmax(8rem,auto)_minmax(9rem,auto)_minmax(9rem,auto)_minmax(8.5rem,auto)]"
 				>
 					<div class="relative sm:col-span-2 lg:col-span-1">
 						<Search class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
 						<Input
 							class="h-11 rounded-2xl bg-background pl-9 shadow-sm"
-							placeholder="Buscar por nombre, email, matrícula..."
+							placeholder="Buscar por nombre, email, matrícula o carrera..."
 							bind:value={q}
 							autocomplete="off"
 						/>
+					</div>
+
+					<div>
+						<Label for="admin-users-career-filter" class="sr-only">Filtrar por carrera</Label>
+						<select
+							id="admin-users-career-filter"
+							class="h-11 w-full rounded-2xl border bg-background px-3 text-sm"
+							bind:value={careerFilter}
+							disabled={!hasCareerAdminAccess || isScopedAdmin}
+						>
+							{#if isGlobalAdmin}
+								<option value="all">Todas las carreras</option>
+								<option value="none">Sin carrera</option>
+								{#each careers as career (career.id)}
+									<option value={String(career.id)}>{career.name}</option>
+								{/each}
+							{:else if isScopedAdmin}
+								<option value={String(currentCareerId)}>{scopedCareerName}</option>
+							{:else}
+								<option value="all">Carrera no disponible</option>
+							{/if}
+						</select>
 					</div>
 
 					<select class="h-11 w-full rounded-2xl border px-3 text-sm" bind:value={roleFilter}>
@@ -828,6 +869,7 @@
 								<TableHead class="pl-6">Usuario</TableHead>
 								<TableHead>ID</TableHead>
 								<TableHead>Email</TableHead>
+								<TableHead>Carrera</TableHead>
 								<TableHead>Estatus</TableHead>
 								<TableHead>Rol</TableHead>
 								<TableHead class="pr-4 text-right">Acciones</TableHead>
@@ -837,13 +879,13 @@
 						<TableBody>
 							{#if loading}
 								<TableRow>
-									<TableCell colspan="6" class="py-12 text-center text-sm text-muted-foreground">
+									<TableCell colspan="7" class="py-12 text-center text-sm text-muted-foreground">
 										<Loader2 class="mx-auto h-4 w-4 animate-spin" />
 									</TableCell>
 								</TableRow>
 							{:else if users.length === 0}
 								<TableRow>
-									<TableCell colspan="6" class="py-12 text-center text-sm text-muted-foreground">
+									<TableCell colspan="7" class="py-12 text-center text-sm text-muted-foreground">
 										No se encontraron usuarios.
 									</TableCell>
 								</TableRow>
@@ -869,6 +911,14 @@
 
 										<TableCell class="font-mono text-xs text-muted-foreground">{u.id}</TableCell>
 										<TableCell class="truncate">{u.email}</TableCell>
+										<TableCell>
+											<div class="max-w-48 text-sm font-medium">{userCareerName(u)}</div>
+											{#if userCareerFaculty(u)}
+												<div class="max-w-48 truncate text-xs text-muted-foreground">
+													{userCareerFaculty(u)}
+												</div>
+											{/if}
+										</TableCell>
 										<TableCell>
 											<Badge class={statusBadgeClass(u.status)}>{formatStatus(u.status)}</Badge>
 										</TableCell>
@@ -945,6 +995,12 @@
 												<Badge class={statusBadgeClass(u.status)}>{formatStatus(u.status)}</Badge>
 											</div>
 											<div class="truncate text-xs text-muted-foreground">{u.email}</div>
+											<div class="mt-1 text-xs text-muted-foreground">
+												<span class="font-medium text-slate-600">Carrera:</span> {userCareerName(u)}
+											</div>
+											{#if userCareerFaculty(u)}
+												<div class="truncate text-xs text-muted-foreground">{userCareerFaculty(u)}</div>
+											{/if}
 										</div>
 									</div>
 
