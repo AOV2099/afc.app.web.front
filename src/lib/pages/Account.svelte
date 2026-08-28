@@ -1,12 +1,11 @@
 <script>
   import { onMount } from 'svelte';
-  import { Button } from "$lib/components/ui/button";
   import { Avatar, AvatarFallback, AvatarImage } from "$lib/components/ui/avatar";
   import { meApi } from '$lib/services/api';
   import { currentUser, setCurrentUser } from '../../routes/store';
 
 
-  import { Camera, GraduationCap } from "lucide-svelte";
+	import { GraduationCap } from "lucide-svelte";
 	import ProfileTab from "./ProfileTab.svelte";
 
   export let title = "Cuenta";
@@ -38,7 +37,7 @@
   $: userName = resolveUserName($currentUser);
   $: userCareer = resolveCareer($currentUser);
   $: userMatricula = resolveStudentId($currentUser);
-  $: userAvatarUrl = $currentUser?.avatarUrl || $currentUser?.avatar_url || '';
+  $: userAvatarUrl = $currentUser?.picture || $currentUser?.avatarUrl || $currentUser?.avatar_url || '';
   $: userInitials = initialsFromName(userName);
 
   onMount(async () => {
@@ -62,17 +61,9 @@
   <div class="mt-6 flex items-center gap-4">
     <div class="relative">
       <Avatar class="h-16 w-16 shadow-sm">
-        <AvatarImage src={userAvatarUrl} alt={userName} />
+        {#if userAvatarUrl}<AvatarImage src={userAvatarUrl} alt={userName} />{/if}
         <AvatarFallback>{userInitials}</AvatarFallback>
       </Avatar>
-
-      <Button
-        size="icon"
-        class="absolute -bottom-1 -right-1 h-8 w-8 rounded-full border-4 border-background"
-        aria-label="Cambiar foto"
-      >
-        <Camera class="h-4 w-4" />
-      </Button>
     </div>
 
     <div class="min-w-0">

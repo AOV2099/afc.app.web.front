@@ -1,8 +1,8 @@
 <script>
 	import AppShell from "./AppShell.svelte";
-
+	export let data;
 </script>
 
-<AppShell>
+<AppShell user={data.user}>
   <slot />
 </AppShell>

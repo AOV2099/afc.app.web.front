@@ -3,7 +3,7 @@
 	import { page } from '$app/stores';
 	import { tick } from 'svelte';
 
-	import { Avatar, AvatarFallback } from '$lib/components/ui/avatar';
+	import { Avatar, AvatarFallback, AvatarImage } from '$lib/components/ui/avatar';
 	import { authApi, clearClientRole } from '$lib/services/api';
 	import { isNavigationPathActive, isNavigationPathExact } from '$lib/utils/navigation.js';
 	import {
@@ -41,6 +41,7 @@
 	$: email = String(user?.email || '').trim();
 	$: displayName = [firstName, lastName].filter(Boolean).join(' ') || email || 'Administrador';
 	$: initials = getInitials(firstName, lastName, email);
+	$: userPicture = String(user?.picture || '').trim();
 	$: administratorLabel =
 		Number(user?.career_id ?? user?.careerId) === 1
 			? 'Administrador global'
@@ -109,6 +110,7 @@
 				on:click={() => goTo('/admin/settings')}
 			>
 				<Avatar class="h-11 w-11 border-2 border-white/25 bg-white/15 text-white">
+					{#if userPicture}<AvatarImage src={userPicture} alt={displayName} />{/if}
 					<AvatarFallback class="bg-white/15 text-sm font-bold text-white">
 						{initials}
 					</AvatarFallback>
@@ -206,6 +208,7 @@
 			on:click={() => goTo('/admin/settings', true)}
 		>
 			<Avatar class="h-12 w-12 border-2 border-white/25 bg-white/15 text-white">
+				{#if userPicture}<AvatarImage src={userPicture} alt={displayName} />{/if}
 				<AvatarFallback class="bg-white/15 text-sm font-bold text-white">
 					{initials}
 				</AvatarFallback>
