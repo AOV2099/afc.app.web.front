@@ -8,7 +8,7 @@
 	import { Label } from '$lib/components/ui/label';
 	import { Separator } from '$lib/components/ui/separator';
 	import { authApi, clearClientRole, getHomePathByRole } from '$lib/services/api';
-	import { GOOGLE_AUTH_MODE, GOOGLE_CLIENT_ID } from '$lib/services/config';
+	import { GOOGLE_AUTH_MODE, GOOGLE_AUTH_URL, GOOGLE_CLIENT_ID } from '$lib/services/config';
 	import { loadGoogleIdentityServices, requestGoogleAuthorizationCode } from '$lib/services/googleAuth';
 	import { setCurrentUser } from '../../routes/store';
 
@@ -93,7 +93,7 @@
 
 		try {
 			if (GOOGLE_AUTH_MODE === 'gateway') {
-				window.location.assign('/auth/google');
+				window.location.assign(GOOGLE_AUTH_URL);
 				return;
 			}
 

@@ -1112,7 +1112,7 @@
 	$: cancelPolicyMeta = getCancelPolicyMeta(form.cancelPolicy);
 </script>
 
-<div class="min-h-screen bg-background">
+<div class="min-h-screen bg-light-blue-background">
 	<!-- Top bar -->
 	<div class="sticky top-0 z-20 border-b bg-background/80 backdrop-blur">
 		<div class="mx-auto w-full max-w-screen-md px-4 py-4 sm:px-6 lg:px-8">

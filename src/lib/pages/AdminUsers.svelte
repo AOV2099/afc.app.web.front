@@ -702,7 +702,7 @@
 	}
 </script>
 
-<div class="min-h-screen bg-background">
+<div class="min-h-screen bg-light-blue-background">
 	<!-- Top bar -->
 	<div class="sticky top-0 z-30 border-b bg-background/95 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/85">
 		<div class="mx-auto w-full max-w-screen-lg px-4 py-4 sm:px-6 lg:px-8">

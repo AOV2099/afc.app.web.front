@@ -23,7 +23,7 @@
 	const statsStyleMap = {
 		events: {
 			color: 'blue',
-			cardClass: 'bg-blue-50/60',
+			cardClass: 'white',
 			iconWrapClass: 'bg-blue-100',
 			iconClass: 'text-blue-700',
 			badgeClass: 'bg-blue-100 text-blue-700 hover:bg-blue-100',
@@ -214,7 +214,7 @@
 	- Diseño mobile-first (como la referencia)
 -->
 
-<div class="min-h-screen bg-background">
+<div class="min-h-screen bg-light-blue-background">
 	<!-- Top bar -->
 	<div class="mx-auto w-full max-w-screen-md px-4 pt-6 sm:px-6 lg:px-8">
 		<div class="relative flex items-center justify-between">
@@ -235,12 +235,12 @@
 	<main class="mx-auto w-full max-w-screen-md px-4 pb-24 pt-6 sm:px-6 lg:px-8">
 		<!-- Title -->
 		<section class="pt-2">
-			<h2 class="text-[28px] font-semibold tracking-tight sm:text-[32px]">Resumen del Semestre</h2>
-			<p class="mt-1 text-sm text-muted-foreground">
+			<h2 class="text-[28px] font-semibold tracking-tight sm:text-[32px]">Resumen </h2>
+			<!--<p class="mt-1 text-sm text-muted-foreground">
 				<span class="text-foreground/90">{semester.label}</span>
 				<span class="mx-2">•</span>
 				{semester.updatedAt}
-			</p>
+			</p>-->
 			{#if error}
 				<p class="mt-2 text-sm font-semibold text-red-600">{error}</p>
 			{/if}

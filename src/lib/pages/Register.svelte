@@ -108,7 +108,7 @@
 	});
 </script>
 
-<div class="min-h-dvh bg-background">
+<div class="min-h-dvh bg-light-blue-background">
 	<div class="relative h-56 w-full overflow-hidden">
 		<img
 			src="https://www.aragon.unam.mx/fes-aragon/public_html/img/comunicacion_social/identidad-institucional.jpg"

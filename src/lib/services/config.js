@@ -15,3 +15,5 @@ export const GOOGLE_AUTH_MODE =
 	String(env.PUBLIC_GOOGLE_AUTH_MODE || 'direct').trim().toLowerCase() === 'gateway'
 		? 'gateway'
 		: 'direct';
+export const GOOGLE_AUTH_URL =
+	normalizeBaseUrl(env.PUBLIC_GOOGLE_AUTH_URL) || `${API_BASE_URL}/auth/google`;
