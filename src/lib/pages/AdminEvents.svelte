@@ -10,6 +10,7 @@
   } from "$lib/catalogs/eventCategories";
   import { getEventCategoryIcon } from "$lib/catalogs/eventCategoryIcons";
   import { getEventCategoryStyleClasses } from "$lib/stores/eventCategoryStyles";
+  import { isPastEvent } from "$lib/utils/events.js";
   import { Card, CardContent } from "$lib/components/ui/card";
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
@@ -178,6 +179,10 @@
     }
 
     return `Inscritos: ${registrationsCount} · Disponibles: Sin límite`;
+  }
+
+  function isCareerRestricted(ev) {
+    return ev?.can_manage === false;
   }
 
   function normalizeStaffUserId(value) {
@@ -432,9 +437,11 @@
     loadEvents({ page: filters.page + 1 });
   }
 
-  function goToMetrics(eventId, e) {
+  function goToMetrics(event, e) {
     e?.stopPropagation?.();
     e?.preventDefault?.();
+    if (isCareerRestricted(event)) return;
+    const eventId = event?.id;
     if (!eventId) return;
     goto(`/admin/events/${eventId}/metrics`);
   }
@@ -572,6 +579,7 @@
   $: normalizedEditCoverImageUrl = normalizeWebImageUrl(editForm.coverImageUrl);
 
   async function openEditDialog(ev) {
+    if (isCareerRestricted(ev)) return;
     selectedEventId = ev?.id;
     editError = "";
     eventStaffCredentials = null;
@@ -726,7 +734,9 @@
   <div class="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
     {#each events as ev (ev.id)}
       <Card
-        class="cursor-pointer overflow-hidden rounded-2xl border pt-0 transition hover:shadow-md"
+        class={`overflow-hidden rounded-2xl border pt-0 transition ${isCareerRestricted(ev) ? 'pointer-events-none cursor-not-allowed border-slate-300 bg-slate-100 opacity-60 grayscale select-none' : 'cursor-pointer hover:shadow-md'} ${isPastEvent(ev) ? 'border-slate-300 bg-slate-100 opacity-60 grayscale' : ''}`}
+        data-past={isPastEvent(ev) ? "true" : undefined}
+        data-career-disabled={isCareerRestricted(ev) ? "true" : undefined}
         onclick={() => openEditDialog(ev)}
         onkeydown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
@@ -735,7 +745,8 @@
           }
         }}
         role="button"
-        tabindex="0"
+        aria-disabled={isCareerRestricted(ev)}
+        tabindex={isCareerRestricted(ev) ? "-1" : "0"}
       >
         <div
           class="h-44 w-full bg-muted"
@@ -756,6 +767,12 @@
               >{ev.status}</Badge
             >
           </div>
+
+          {#if isCareerRestricted(ev)}
+            <Badge class="rounded-full bg-slate-700 text-white hover:bg-slate-700">
+              Otra carrera{ev.owner_career_name ? ` · ${ev.owner_career_name}` : ""}
+            </Badge>
+          {/if}
 
           <div class="line-clamp-2 text-lg font-semibold leading-tight">
             {ev.title}
@@ -785,7 +802,8 @@
           <div class="pt-2">
             <Button
               class="w-full rounded-xl bg-blue-600 text-white hover:bg-blue-700"
-              onclick={(e) => goToMetrics(ev.id, e)}
+              disabled={isCareerRestricted(ev)}
+              onclick={(e) => goToMetrics(ev, e)}
             >
               Ver métricas
             </Button>

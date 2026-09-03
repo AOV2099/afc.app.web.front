@@ -126,6 +126,24 @@ export const adminUsersApi = {
 			body: JSON.stringify(payload)
 		});
 	},
+	addVisitorHours(accountNumber, payload) {
+		return apiFetch(`/api/admin/users/account/${encodeURIComponent(accountNumber)}/hours`, {
+			method: 'POST',
+			body: JSON.stringify(payload)
+		});
+	},
+	previewHoursCsv(csvText, category) {
+		return apiFetch(`/api/admin/users/hours/import/preview${toQueryString({ category })}`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'text/csv' },
+			body: String(csvText ?? '')
+		});
+	},
+	commitHoursCsv(importId) {
+		return apiFetch(`/api/admin/users/hours/import/${encodeURIComponent(importId)}/commit`, {
+			method: 'POST'
+		});
+	},
 	previewStudentCsv(csvText, careerId) {
 		return apiFetch(
 			`/api/admin/users/import/preview${toQueryString({ career_id: careerId })}`,

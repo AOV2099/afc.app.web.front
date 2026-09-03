@@ -22,6 +22,19 @@ export function normalizeAdminStudentId(value) {
 	return String(value || '').slice(0, 10);
 }
 
+export function isManualHoursEligibleUser(user) {
+	return /^\d{8,10}$/u.test(String(user?.student_id || '').trim());
+}
+
+export function buildManualHoursAdjustmentPayload({ hours, category, motive, requestId }) {
+	return {
+		hours: String(hours ?? '').trim(),
+		category: String(category || '').trim(),
+		motive: String(motive || '').trim(),
+		requestId: String(requestId || '').trim()
+	};
+}
+
 export function buildAdminUserCreatePayload(form, { isGlobalAdmin, currentCareerId }) {
 	const scopedCareerId = positiveCareerId(currentCareerId);
 	const selectedCareerId = positiveCareerId(form?.careerId);

@@ -2,6 +2,7 @@
 	import { onMount, onDestroy } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import { adminUsersApi, careersApi } from '$lib/services/api';
+	import { EVENT_CATEGORY_OPTIONS } from '$lib/catalogs/eventCategories';
 	import {
 		STUDENT_CSV_MAX_ROWS,
 		STUDENT_CSV_TEMPLATE,
@@ -11,9 +12,19 @@
 		validateStudentCsvText
 	} from '$lib/services/studentCsvImport';
 	import {
+		HOURS_CSV_MAX_ROWS,
+		HOURS_CSV_TEMPLATE,
+		HOURS_CSV_TEMPLATE_FILENAME,
+		normalizeHoursCsvErrors,
+		validateHoursCsvFile,
+		validateHoursCsvText
+	} from '$lib/services/hoursCsvImport';
+	import {
 		buildAdminUserCreatePayload,
 		buildAdminUserEditPayload,
+		buildManualHoursAdjustmentPayload,
 		getAdminCareerScope,
+		isManualHoursEligibleUser,
 		normalizeAdminStudentId,
 		positiveCareerId
 	} from '$lib/services/adminUserCareerScope';
@@ -24,8 +35,10 @@
 	import { Badge } from '$lib/components/ui/badge';
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
+	import { Textarea } from '$lib/components/ui/textarea';
 	import { Separator } from '$lib/components/ui/separator';
 	import * as Dialog from '$lib/components/ui/dialog';
+	import * as Tooltip from '$lib/components/ui/tooltip';
 
 	import {
 		Search,
@@ -38,7 +51,11 @@
 		Upload,
 		Download,
 		AlertTriangle,
-		CheckCircle2
+		CheckCircle2,
+		ArrowUpDown,
+		ArrowUp,
+		ArrowDown,
+		Clock3
 	} from 'lucide-svelte';
 
 	import {
@@ -78,6 +95,8 @@
 	let pageSize = 50;
 	let total = 0;
 	let totalPages = 1;
+	let sortBy = '';
+	let sortDirection = 'asc';
 
 	let createOpen = false;
 	let editOpen = false;
@@ -94,6 +113,25 @@
 	let showCreateConfirmPassword = false;
 	let showUpdatePassword = false;
 	let showUpdateConfirmPassword = false;
+	let hoursOpen = false;
+	let hoursUser = null;
+	let hoursSubmitting = false;
+	let hoursError = '';
+	let hoursForm = {
+		hours: '',
+		category: '',
+		motive: '',
+		requestId: ''
+	};
+	let hoursImportOpen = false;
+	let hoursImportFile = null;
+	let hoursImportFileInput;
+	let hoursImportCategory = '';
+	let hoursImportId = '';
+	let hoursImportSummary = null;
+	let hoursImportErrors = [];
+	let hoursImportPreviewLoading = false;
+	let hoursImportCommitLoading = false;
 
 	let importUploadOpen = false;
 	let importConfirmationOpen = false;
@@ -126,11 +164,20 @@
 	let canImportStudents = false;
 	let adminCareerScope = null;
 
-	const roleOptions = ['admin', 'staff', 'student', 'auditor'];
+	const roleOptions = ['admin', 'staff', 'student', 'auditor', 'visitor'];
 	const statusOptions = Object.keys(USER_STATUS_CATALOG);
 	const pageSizeOptions = [10, 25, 50, 100];
 	const defaultPageSize = 50;
 	const pageSizeStorageKey = 'afc.admin.users.pageSize';
+	const sortableColumns = [
+		{ field: 'name', label: 'Usuario', className: 'pl-4' },
+		{ field: 'email', label: 'Email', className: '' },
+		{ field: 'account', label: 'Matrícula', className: '' },
+		{ field: 'hours', label: 'Total de horas', className: '' },
+		{ field: 'career', label: 'Carrera', className: '' },
+		{ field: 'status', label: 'Estatus', className: '' },
+		{ field: 'role', label: 'Rol', className: '' }
+	];
 
 	function normalizePageSize(value) {
 		const parsed = Number(value);
@@ -219,6 +266,14 @@
 	function formatRole(role) {
 		if (!role) return 'Visitor';
 		return role.charAt(0).toUpperCase() + role.slice(1);
+	}
+
+	function formatHours(value) {
+		const hours = Number(value);
+		return `${(Number.isFinite(hours) ? hours : 0).toLocaleString('es-MX', {
+			minimumFractionDigits: 2,
+			maximumFractionDigits: 2
+		})} h`;
 	}
 
 	function resolveUserCareerId(user) {
@@ -311,6 +366,116 @@
 		showUpdatePassword = false;
 		showUpdateConfirmPassword = false;
 		passwordOpen = true;
+	}
+
+	function openManualHours(user) {
+		if (!hasCareerAdminAccess || !isManualHoursEligibleUser(user)) return;
+		hoursUser = user;
+		hoursError = '';
+		hoursForm = {
+			hours: '',
+			category: '',
+			motive: '',
+			requestId: globalThis.crypto.randomUUID()
+		};
+		hoursOpen = true;
+	}
+
+	function resetHoursImport() {
+		hoursImportFile = null;
+		if (hoursImportFileInput) hoursImportFileInput.value = '';
+		hoursImportCategory = '';
+		hoursImportId = '';
+		hoursImportSummary = null;
+		hoursImportErrors = [];
+		hoursImportPreviewLoading = false;
+		hoursImportCommitLoading = false;
+	}
+
+	function openHoursImport() {
+		if (!hasCareerAdminAccess) return;
+		resetHoursImport();
+		hoursImportOpen = true;
+	}
+
+	function handleHoursImportOpenChange(open) {
+		if (!open && !hoursImportPreviewLoading && !hoursImportCommitLoading) resetHoursImport();
+	}
+
+	function handleHoursImportFile(event) {
+		hoursImportFile = event?.currentTarget?.files?.[0] || null;
+		hoursImportId = '';
+		hoursImportSummary = null;
+		hoursImportErrors = [];
+	}
+
+	function downloadHoursCsvTemplate() {
+		if (typeof document === 'undefined') return;
+		const blob = new Blob([HOURS_CSV_TEMPLATE], { type: 'text/csv;charset=utf-8' });
+		const url = URL.createObjectURL(blob);
+		const link = document.createElement('a');
+		link.href = url;
+		link.download = HOURS_CSV_TEMPLATE_FILENAME;
+		document.body.appendChild(link);
+		link.click();
+		link.remove();
+		URL.revokeObjectURL(url);
+	}
+
+	async function previewHoursImport() {
+		hoursImportErrors = [];
+		if (!hoursImportCategory) {
+			hoursImportErrors = [{ row: '—', field: 'categoria', message: 'Selecciona una categoría.' }];
+			return;
+		}
+		const fileError = validateHoursCsvFile(hoursImportFile);
+		if (fileError) {
+			hoursImportErrors = [{ row: '—', field: 'archivo', message: fileError }];
+			return;
+		}
+		hoursImportPreviewLoading = true;
+		try {
+			const csvText = await hoursImportFile.text();
+			const textError = validateHoursCsvText(csvText);
+			if (textError) throw new Error(textError);
+			const response = await adminUsersApi.previewHoursCsv(csvText, hoursImportCategory);
+			if (!response?.ok || !response?.import_id || !response?.summary) {
+				throw new Error(response?.message || 'La respuesta de validación no es válida.');
+			}
+			hoursImportId = response.import_id;
+			hoursImportSummary = {
+				rows: Number(response.summary.rows || 0),
+				users: Number(response.summary.users || 0),
+				totalHours: Number(response.summary.total_hours || 0)
+			};
+		} catch (error) {
+			hoursImportErrors = normalizeHoursCsvErrors(error);
+			hoursImportId = '';
+			hoursImportSummary = null;
+		} finally {
+			hoursImportPreviewLoading = false;
+		}
+	}
+
+	async function commitHoursImport() {
+		if (!hoursImportId || hoursImportCommitLoading) return;
+		hoursImportCommitLoading = true;
+		try {
+			const response = await adminUsersApi.commitHoursCsv(hoursImportId);
+			if (!response?.ok) throw new Error(response?.message || 'No se pudo completar la carga.');
+			toast.success(
+				`Se agregaron ${Number(response.total_hours || 0).toLocaleString('es-MX', { maximumFractionDigits: 2 })} horas en ${Number(response.adjusted || 0)} ajustes.`
+			);
+			hoursImportOpen = false;
+			resetHoursImport();
+			await loadUsers();
+		} catch (error) {
+			hoursImportErrors = normalizeHoursCsvErrors(error);
+			hoursImportId = '';
+			hoursImportSummary = null;
+		} finally {
+			hoursImportCommitLoading = false;
+		}
 	}
 
 	function clearImportFile() {
@@ -529,7 +694,9 @@
 				q: q.trim() || undefined,
 				status: statusFilter === 'all' ? undefined : statusFilter,
 				role: roleFilter === 'all' ? undefined : roleFilter,
-				career_id: careerFilter === 'all' ? undefined : careerFilter
+				career_id: careerFilter === 'all' ? undefined : careerFilter,
+				sortBy: sortBy || undefined,
+				sortDirection: sortBy ? sortDirection : undefined
 			});
 
 			if (!res?.ok) {
@@ -642,6 +809,45 @@
 		}
 	}
 
+	async function submitManualHours() {
+		if (!hoursUser || !isManualHoursEligibleUser(hoursUser) || hoursSubmitting) return;
+		hoursError = '';
+
+		const payload = buildManualHoursAdjustmentPayload(hoursForm);
+		const hours = Number(payload.hours);
+		if (!/^\d{1,3}(?:\.\d{1,2})?$/u.test(payload.hours) || hours <= 0 || hours > 100) {
+			hoursError = 'Las horas deben ser mayores a 0, no exceder 100 y tener máximo 2 decimales.';
+			return;
+		}
+		if (!payload.category) {
+			hoursError = 'Selecciona una categoría.';
+			return;
+		}
+		if (payload.motive.length < 5 || payload.motive.length > 500) {
+			hoursError = 'El motivo debe contener entre 5 y 500 caracteres.';
+			return;
+		}
+
+		hoursSubmitting = true;
+		try {
+			const res = await adminUsersApi.addVisitorHours(hoursUser.student_id, payload);
+			if (!res?.ok) throw new Error(res?.message || 'No se pudieron agregar las horas.');
+
+			const added = Number(res?.adjustment?.hours_added ?? hours);
+			const totalHours = Number(res?.adjustment?.total_hours ?? 0);
+			hoursOpen = false;
+			toast.success(
+				`${added.toLocaleString('es-MX', { maximumFractionDigits: 2 })} horas agregadas. Total: ${totalHours.toLocaleString('es-MX', { maximumFractionDigits: 2 })} horas.`
+			);
+			hoursUser = null;
+			hoursForm = { hours: '', category: '', motive: '', requestId: '' };
+		} catch (e) {
+			hoursError = e?.message || 'No se pudieron agregar las horas.';
+		} finally {
+			hoursSubmitting = false;
+		}
+	}
+
 	function handlePageSizeChange(event) {
 		const nextPageSize = normalizePageSize(event.currentTarget?.value);
 		pageSize = nextPageSize;
@@ -677,6 +883,22 @@
 		loadUsers();
 	}
 
+	function changeSort(field) {
+		if (sortBy === field) {
+			sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+		} else {
+			sortBy = field;
+			sortDirection = 'asc';
+		}
+		page = 1;
+		loadUsers();
+	}
+
+	function sortAriaValue(field) {
+		if (sortBy !== field) return 'none';
+		return sortDirection === 'asc' ? 'ascending' : 'descending';
+	}
+
 	onMount(() => {
 		try {
 			pageSize = normalizePageSize(window.localStorage.getItem(pageSizeStorageKey));
@@ -705,7 +927,7 @@
 <div class="min-h-screen bg-light-blue-background">
 	<!-- Top bar -->
 	<div class="sticky top-0 z-30 border-b bg-background/95 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/85">
-		<div class="mx-auto w-full max-w-screen-lg px-4 py-4 sm:px-6 lg:px-8">
+		<div class="mx-auto w-full max-w-[1600px] px-4 py-4 sm:px-6 lg:px-8">
 			<div class="flex flex-wrap items-start justify-between gap-3">
 				<div>
 					<h1 class="text-base font-semibold tracking-tight">Usuarios</h1>
@@ -719,10 +941,11 @@
 					<Button
 						variant="outline"
 						class="h-11 rounded-2xl px-4 shadow-sm"
-						onclick={downloadStudentCsvTemplate}
+						onclick={openHoursImport}
+						disabled={!hasCareerAdminAccess || hoursImportPreviewLoading || hoursImportCommitLoading}
 					>
-						<Download class="h-4 w-4" />
-						Descargar plantilla
+						<Clock3 class="h-4 w-4" />
+						Cargar horas
 					</Button>
 					<span title={importDisabledMessage || 'Importar estudiantes desde un archivo CSV'}>
 						<Button
@@ -828,12 +1051,18 @@
 	</div>
 
 	<!-- Content -->
-	<main class="mx-auto w-full max-w-screen-lg px-4 pb-10 pt-6 sm:px-6 lg:px-8">
+	<main class="mx-auto w-full max-w-[1600px] px-4 pb-10 pt-6 sm:px-6 lg:px-8">
 		<div class="space-y-6">
 			<!-- KPI de usuarios temporalmente ocultos -->
 
 			<div class="flex items-center justify-between">
-				<p class="text-xs font-semibold tracking-wider text-muted-foreground">RESULTADOS RECIENTES</p>
+				<p
+					class="text-sm font-semibold text-muted-foreground"
+					aria-live="polite"
+					aria-atomic="true"
+				>
+					{total.toLocaleString('es-MX')} {total === 1 ? 'registro' : 'registros'}
+				</p>
 				<div class="flex items-center gap-2">
 					<Button variant="outline" class="rounded-xl" disabled={page <= 1 || loading} onclick={prevPage}>
 						Anterior
@@ -861,17 +1090,29 @@
 			{/if}
 
 			<!-- Desktop table -->
-			<Card class={`hidden rounded-3xl border bg-card text-card-foreground sm:block ${cardShadow}`}>
-				<CardContent class="p-0">
-					<Table>
+			<Card class={`hidden overflow-hidden rounded-3xl border bg-card text-card-foreground sm:block ${cardShadow}`}>
+				<CardContent class="overflow-x-auto p-0">
+					<Table class="min-w-[1200px]">
 						<TableHeader>
 							<TableRow class="bg-slate-50 hover:bg-slate-50">
-								<TableHead class="pl-6">Usuario</TableHead>
-								<TableHead>ID</TableHead>
-								<TableHead>Email</TableHead>
-								<TableHead>Carrera</TableHead>
-								<TableHead>Estatus</TableHead>
-								<TableHead>Rol</TableHead>
+								{#each sortableColumns as column (column.field)}
+									<TableHead class={column.className} aria-sort={sortAriaValue(column.field)}>
+										<button
+											type="button"
+											class="flex w-full items-center gap-1.5 py-2 text-left hover:text-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+											onclick={() => changeSort(column.field)}
+										>
+											{column.label}
+											{#if sortBy !== column.field}
+												<ArrowUpDown class="h-3.5 w-3.5 text-muted-foreground" />
+											{:else if sortDirection === 'asc'}
+												<ArrowUp class="h-3.5 w-3.5" />
+											{:else}
+												<ArrowDown class="h-3.5 w-3.5" />
+											{/if}
+										</button>
+									</TableHead>
+								{/each}
 								<TableHead class="pr-4 text-right">Acciones</TableHead>
 							</TableRow>
 						</TableHeader>
@@ -879,22 +1120,19 @@
 						<TableBody>
 							{#if loading}
 								<TableRow>
-									<TableCell colspan="7" class="py-12 text-center text-sm text-muted-foreground">
+									<TableCell colspan="8" class="py-12 text-center text-sm text-muted-foreground">
 										<Loader2 class="mx-auto h-4 w-4 animate-spin" />
 									</TableCell>
 								</TableRow>
 							{:else if users.length === 0}
 								<TableRow>
-									<TableCell colspan="7" class="py-12 text-center text-sm text-muted-foreground">
+									<TableCell colspan="8" class="py-12 text-center text-sm text-muted-foreground">
 										No se encontraron usuarios.
 									</TableCell>
 								</TableRow>
 							{:else}
 								{#each users as u (u.id)}
-									<TableRow
-										class={hasCareerAdminAccess ? 'cursor-pointer hover:bg-slate-100/40' : ''}
-										onclick={() => openEditUser(u)}
-									>
+									<TableRow>
 										<TableCell class="pl-6">
 											<div class="flex items-center gap-3">
 												<Avatar class="h-9 w-9">
@@ -909,8 +1147,9 @@
 											</div>
 										</TableCell>
 
-										<TableCell class="font-mono text-xs text-muted-foreground">{u.id}</TableCell>
 										<TableCell class="truncate">{u.email}</TableCell>
+										<TableCell class="font-mono text-sm">{u.student_id || '-'}</TableCell>
+										<TableCell class="font-semibold text-slate-700">{formatHours(u.hours_total)}</TableCell>
 										<TableCell>
 											<div class="max-w-48 text-sm font-medium">{userCareerName(u)}</div>
 											{#if userCareerFaculty(u)}
@@ -928,32 +1167,46 @@
 										</TableCell>
 
 										<TableCell class="pr-4 text-right">
-											<Button
-												variant="ghost"
-												size="icon"
-												class="rounded-full"
-												disabled={!hasCareerAdminAccess}
-												onclick={(event) => {
-													event.stopPropagation();
-													openPasswordUser(u);
-												}}
-												aria-label="Cambiar contraseña"
-											>
-												<KeyRound class="h-4 w-4 text-amber-600" />
-											</Button>
-											<Button
-												variant="ghost"
-												size="icon"
-												class="rounded-full"
-												disabled={!hasCareerAdminAccess}
-												onclick={(event) => {
-													event.stopPropagation();
-													openEditUser(u);
-												}}
-												aria-label="Editar"
-											>
-												<Pencil class="h-4 w-4 text-blue-600" />
-											</Button>
+											<Tooltip.Provider delayDuration={150}>
+												<span class="inline-flex items-center">
+													{#if isManualHoursEligibleUser(u)}
+														<Tooltip.Root>
+															<Tooltip.Trigger
+																class="inline-grid h-9 w-9 place-items-center rounded-full hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+																disabled={!hasCareerAdminAccess}
+																onclick={() => openManualHours(u)}
+																aria-label="Agregar horas"
+																title="Agregar horas"
+															>
+																<Clock3 class="h-4 w-4 text-emerald-600" />
+															</Tooltip.Trigger>
+															<Tooltip.Content>Agregar horas</Tooltip.Content>
+														</Tooltip.Root>
+													{/if}
+													<Tooltip.Root>
+														<Tooltip.Trigger
+															class="inline-grid h-9 w-9 place-items-center rounded-full hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+															disabled={!hasCareerAdminAccess}
+															onclick={() => openPasswordUser(u)}
+															aria-label="Cambiar contraseña"
+														>
+															<KeyRound class="h-4 w-4 text-amber-600" />
+														</Tooltip.Trigger>
+														<Tooltip.Content>Cambiar contraseña</Tooltip.Content>
+													</Tooltip.Root>
+													<Tooltip.Root>
+														<Tooltip.Trigger
+															class="inline-grid h-9 w-9 place-items-center rounded-full hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+															disabled={!hasCareerAdminAccess}
+															onclick={() => openEditUser(u)}
+															aria-label="Editar usuario"
+														>
+															<Pencil class="h-4 w-4 text-blue-600" />
+														</Tooltip.Trigger>
+														<Tooltip.Content>Editar usuario</Tooltip.Content>
+													</Tooltip.Root>
+												</span>
+											</Tooltip.Provider>
 										</TableCell>
 									</TableRow>
 								{/each}
@@ -979,7 +1232,7 @@
 					</Card>
 				{:else}
 					{#each users as u (u.id)}
-						<Card class={`rounded-3xl border bg-card text-card-foreground ${cardShadow}`} onclick={() => openEditUser(u)}>
+						<Card class={`rounded-3xl border bg-card text-card-foreground ${cardShadow}`}>
 							<CardContent class="p-5">
 								<div class="flex items-start justify-between gap-3">
 									<div class="flex items-center gap-3">
@@ -990,7 +1243,12 @@
 
 										<div class="min-w-0">
 											<div class="truncate text-base font-semibold tracking-tight">{fullName(u)}</div>
-											<div class="text-xs text-muted-foreground">ID: {u.id}</div>
+											<div class="text-xs text-muted-foreground">
+												Matrícula: {u.student_id || '-'}
+											</div>
+											<div class="text-xs font-medium text-slate-700">
+												Total de horas: {formatHours(u.hours_total)}
+											</div>
 											<div class="mt-1">
 												<Badge class={statusBadgeClass(u.status)}>{formatStatus(u.status)}</Badge>
 											</div>
@@ -1010,32 +1268,44 @@
 								<Separator class="my-4" />
 
 								<div class="flex items-center justify-end">
-									<Button
-										variant="ghost"
-										size="icon"
-										class="rounded-full"
-										disabled={!hasCareerAdminAccess}
-										onclick={(event) => {
-											event.stopPropagation();
-											openPasswordUser(u);
-										}}
-										aria-label="Cambiar contraseña"
-									>
-										<KeyRound class="h-4 w-4 text-amber-600" />
-									</Button>
-									<Button
-										variant="ghost"
-										size="icon"
-										class="rounded-full"
-										disabled={!hasCareerAdminAccess}
-										onclick={(event) => {
-											event.stopPropagation();
-											openEditUser(u);
-										}}
-										aria-label="Editar"
-									>
-										<Pencil class="h-4 w-4 text-blue-600" />
-									</Button>
+									<Tooltip.Provider delayDuration={150}>
+										{#if isManualHoursEligibleUser(u)}
+											<Tooltip.Root>
+												<Tooltip.Trigger
+													class="inline-grid h-9 w-9 place-items-center rounded-full hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+													disabled={!hasCareerAdminAccess}
+													onclick={() => openManualHours(u)}
+													aria-label="Agregar horas"
+													title="Agregar horas"
+												>
+													<Clock3 class="h-4 w-4 text-emerald-600" />
+												</Tooltip.Trigger>
+												<Tooltip.Content>Agregar horas</Tooltip.Content>
+											</Tooltip.Root>
+										{/if}
+										<Tooltip.Root>
+											<Tooltip.Trigger
+												class="inline-grid h-9 w-9 place-items-center rounded-full hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+												disabled={!hasCareerAdminAccess}
+												onclick={() => openPasswordUser(u)}
+												aria-label="Cambiar contraseña"
+											>
+												<KeyRound class="h-4 w-4 text-amber-600" />
+											</Tooltip.Trigger>
+											<Tooltip.Content>Cambiar contraseña</Tooltip.Content>
+										</Tooltip.Root>
+										<Tooltip.Root>
+											<Tooltip.Trigger
+												class="inline-grid h-9 w-9 place-items-center rounded-full hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+												disabled={!hasCareerAdminAccess}
+												onclick={() => openEditUser(u)}
+												aria-label="Editar usuario"
+											>
+												<Pencil class="h-4 w-4 text-blue-600" />
+											</Tooltip.Trigger>
+											<Tooltip.Content>Editar usuario</Tooltip.Content>
+										</Tooltip.Root>
+									</Tooltip.Provider>
 								</div>
 							</CardContent>
 						</Card>
@@ -1045,6 +1315,122 @@
 		</div>
 	</main>
 </div>
+
+<Dialog.Root bind:open={hoursImportOpen} onOpenChange={handleHoursImportOpenChange}>
+	<Dialog.Content
+		class="max-h-[90dvh] overflow-y-auto sm:max-w-lg"
+		showCloseButton={!hoursImportPreviewLoading && !hoursImportCommitLoading}
+		onEscapeKeydown={(event) => (hoursImportPreviewLoading || hoursImportCommitLoading) && event.preventDefault()}
+		onInteractOutside={(event) => (hoursImportPreviewLoading || hoursImportCommitLoading) && event.preventDefault()}
+	>
+		<Dialog.Header>
+			<Dialog.Title>Cargar horas</Dialog.Title>
+			<Dialog.Description>
+				Valida el CSV completo antes de agregar horas. La operación se aplicará de forma atómica.
+			</Dialog.Description>
+		</Dialog.Header>
+
+		<div class="space-y-5 py-1">
+			{#if !hoursImportSummary}
+				<div class="space-y-2">
+					<Label for="hours-import-category">Categoría *</Label>
+					<select
+						id="hours-import-category"
+						class="h-10 w-full rounded-md border bg-background px-3 text-sm"
+						bind:value={hoursImportCategory}
+						disabled={hoursImportPreviewLoading}
+						required
+					>
+						<option value="">Selecciona una categoría</option>
+						{#each EVENT_CATEGORY_OPTIONS as category (category.value)}
+							<option value={category.value}>{category.label}</option>
+						{/each}
+					</select>
+				</div>
+
+				<div class="space-y-2">
+					<Label for="hours-import-file">Archivo CSV *</Label>
+					<input
+						bind:this={hoursImportFileInput}
+						id="hours-import-file"
+						type="file"
+						accept=".csv,text/csv"
+						onchange={handleHoursImportFile}
+						disabled={hoursImportPreviewLoading}
+						class="block w-full rounded-xl border border-slate-200 bg-white text-sm text-slate-700 file:mr-4 file:border-0 file:bg-slate-100 file:px-4 file:py-3 file:font-medium file:text-slate-700 hover:file:bg-slate-200"
+					/>
+					<p class="text-xs text-muted-foreground">
+						Columnas exactas: numero_cuenta, horas, motivo. Máximo 2 MB y {HOURS_CSV_MAX_ROWS} filas.
+					</p>
+					<p class="text-xs text-muted-foreground">Cada motivo debe contener entre 5 y 500 caracteres.</p>
+					{#if hoursImportFile}
+						<p class="rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-800">
+							Archivo seleccionado: <span class="font-medium">{hoursImportFile.name}</span>
+						</p>
+					{/if}
+				</div>
+			{:else}
+				<div class="grid grid-cols-3 gap-2 text-center">
+					<div class="rounded-2xl border bg-slate-50 p-3">
+						<div class="text-2xl font-semibold">{hoursImportSummary.rows}</div>
+						<div class="text-xs text-muted-foreground">Filas</div>
+					</div>
+					<div class="rounded-2xl border bg-slate-50 p-3">
+						<div class="text-2xl font-semibold">{hoursImportSummary.users}</div>
+						<div class="text-xs text-muted-foreground">Usuarios</div>
+					</div>
+					<div class="rounded-2xl border border-emerald-200 bg-emerald-50 p-3">
+						<div class="text-2xl font-semibold text-emerald-700">{hoursImportSummary.totalHours}</div>
+						<div class="text-xs text-emerald-700">Horas</div>
+					</div>
+				</div>
+				<p class="rounded-xl border bg-white px-3 py-2 text-sm text-slate-700">
+					Todos los ajustes usarán la categoría
+					<span class="font-medium">
+						{EVENT_CATEGORY_OPTIONS.find((category) => category.value === hoursImportCategory)?.label || hoursImportCategory}
+					</span>.
+					Cada motivo se conservará desde su fila del CSV.
+				</p>
+			{/if}
+
+			{#if hoursImportErrors.length > 0}
+				<div class="max-h-52 space-y-2 overflow-y-auto" role="alert">
+					{#each hoursImportErrors.slice(0, 50) as item, index (`hours-${item.row}-${item.field}-${index}`)}
+						<div class="rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+							<span class="font-semibold">Fila {item.row} · {item.field}:</span> {item.message}
+						</div>
+					{/each}
+				</div>
+			{/if}
+
+			{#if hoursImportPreviewLoading || hoursImportCommitLoading}
+				<div class="flex items-center gap-2 text-sm text-muted-foreground" role="status">
+					<Loader2 class="h-4 w-4 animate-spin" />
+					{hoursImportCommitLoading ? 'Aplicando ajustes…' : 'Validando archivo…'}
+				</div>
+			{/if}
+		</div>
+
+		<Dialog.Footer class="gap-2 sm:gap-0">
+			<Button variant="outline" onclick={downloadHoursCsvTemplate} disabled={hoursImportPreviewLoading || hoursImportCommitLoading}>
+				<Download class="h-4 w-4" />
+				Plantilla
+			</Button>
+			<Button variant="outline" onclick={() => (hoursImportOpen = false)} disabled={hoursImportPreviewLoading || hoursImportCommitLoading}>
+				Cancelar
+			</Button>
+			{#if hoursImportSummary}
+				<Button class="bg-emerald-600 text-white hover:bg-emerald-700" onclick={commitHoursImport} disabled={hoursImportCommitLoading || !hoursImportId}>
+					Confirmar carga
+				</Button>
+			{:else}
+				<Button class="bg-blue-600 text-white hover:bg-blue-700" onclick={previewHoursImport} disabled={hoursImportPreviewLoading || !hoursImportFile || !hoursImportCategory}>
+					Validar archivo
+				</Button>
+			{/if}
+		</Dialog.Footer>
+	</Dialog.Content>
+</Dialog.Root>
 
 <Dialog.Root bind:open={importUploadOpen} onOpenChange={handleImportUploadOpenChange}>
 	<Dialog.Content
@@ -1583,6 +1969,99 @@
 				disabled={passwordSubmitting || !hasCareerAdminAccess}
 			>
 				{passwordSubmitting ? 'Guardando...' : 'Actualizar contraseña'}
+			</Button>
+		</Dialog.Footer>
+	</Dialog.Content>
+</Dialog.Root>
+
+<Dialog.Root bind:open={hoursOpen}>
+	<Dialog.Content
+		class="sm:max-w-md"
+		showCloseButton={!hoursSubmitting}
+		onEscapeKeydown={(event) => hoursSubmitting && event.preventDefault()}
+		onInteractOutside={(event) => hoursSubmitting && event.preventDefault()}
+	>
+		<Dialog.Header>
+			<Dialog.Title>Agregar horas</Dialog.Title>
+			<Dialog.Description>
+				Registra un ajuste manual para
+				{hoursUser ? fullName(hoursUser) : 'el usuario seleccionado'}.
+			</Dialog.Description>
+		</Dialog.Header>
+
+		<div class="space-y-4 py-2">
+			<div class="rounded-xl border bg-slate-50 px-3 py-2">
+				<div class="text-xs font-medium text-muted-foreground">Número de cuenta</div>
+				<div class="font-mono text-sm font-semibold text-slate-900">
+					{hoursUser?.student_id || 'Sin número de cuenta'}
+				</div>
+			</div>
+
+			<div class="space-y-2">
+				<Label for="manual-hours-value">Horas a sumar *</Label>
+				<Input
+					id="manual-hours-value"
+					bind:value={hoursForm.hours}
+					type="number"
+					min="0.01"
+					max="100"
+					step="0.01"
+					inputmode="decimal"
+					placeholder="Ej. 2.5"
+					disabled={hoursSubmitting}
+				/>
+				<p class="text-xs text-muted-foreground">Máximo 100 horas por ajuste.</p>
+			</div>
+
+			<div class="space-y-2">
+				<Label for="manual-hours-category">Categoría *</Label>
+				<select
+					id="manual-hours-category"
+					class="h-10 w-full rounded-md border bg-background px-3 text-sm"
+					bind:value={hoursForm.category}
+					disabled={hoursSubmitting}
+					required
+				>
+					<option value="">Selecciona una categoría</option>
+					{#each EVENT_CATEGORY_OPTIONS as category (category.value)}
+						<option value={category.value}>{category.label}</option>
+					{/each}
+				</select>
+			</div>
+
+			<div class="space-y-2">
+				<Label for="manual-hours-motive">Motivo *</Label>
+				<Textarea
+					id="manual-hours-motive"
+					bind:value={hoursForm.motive}
+					minlength="5"
+					maxlength="500"
+					class="min-h-28"
+					placeholder="Describe por qué se agregan estas horas."
+					disabled={hoursSubmitting}
+				/>
+				<div class="text-right text-xs text-muted-foreground">
+					{hoursForm.motive.length}/500
+				</div>
+			</div>
+
+			{#if hoursError}
+				<div class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700" role="alert">
+					{hoursError}
+				</div>
+			{/if}
+		</div>
+
+		<Dialog.Footer>
+			<Button variant="outline" onclick={() => (hoursOpen = false)} disabled={hoursSubmitting}>
+				Cancelar
+			</Button>
+			<Button
+				class="bg-emerald-600 text-white hover:bg-emerald-700"
+				onclick={submitManualHours}
+				disabled={hoursSubmitting || !hasCareerAdminAccess}
+			>
+				{hoursSubmitting ? 'Agregando...' : 'Agregar horas'}
 			</Button>
 		</Dialog.Footer>
 	</Dialog.Content>

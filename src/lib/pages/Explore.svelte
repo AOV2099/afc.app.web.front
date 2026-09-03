@@ -10,6 +10,11 @@
   import { adminEventsApi, publicEventsApi, myRegistrationsApi } from '$lib/services/api';
   import { getEventCategoryMeta } from '$lib/catalogs/eventCategories';
   import { getEventCategoryIcon } from '$lib/catalogs/eventCategoryIcons';
+  import {
+    isFutureEvent,
+    isPastEvent,
+    isVisibleToUser
+  } from '$lib/utils/events.js';
   import EventCard from "$lib/components/EventCard.svelte";
 
   import { Search, SlidersHorizontal, Ticket, Download } from "lucide-svelte";
@@ -211,6 +216,19 @@
       }
     }
 
+    if (isPastEvent(item)) {
+      return {
+        label: 'Evento finalizado',
+        disabled: true,
+        action: 'none',
+        ticket: null,
+        secondaryLabel: null,
+        secondaryDisabled: true,
+        secondaryAction: 'none',
+        availabilityLabel: 'Este evento ya finalizó.'
+      };
+    }
+
     const capacity = Number(item?.capacity ?? 0) || 0;
     const inscritos = Number(item?.registrationsCount ?? 0) || 0;
     if (item?.hasCapacity && capacity > 0 && inscritos >= capacity) {
@@ -302,6 +320,7 @@
     loadError = '';
 
     const query = { ...filters, ...next };
+    const now = Date.now();
 
     try {
       const res = adminMode
@@ -310,14 +329,14 @@
             page: query.page,
             pageSize: query.pageSize,
             q: query.q,
-            starts_from: query.starts_from,
             starts_to: query.starts_to
           });
       const events = Array.isArray(res?.events) ? res.events : [];
           const mapped = await enrichWithRegistrationsCount(events.map(mapAdminEventToUi));
+          const visible = adminMode ? mapped : mapped.filter((item) => isVisibleToUser(item, now));
 
-      upcoming = mapped;
-      featured = mapped.slice(0, 5);
+          upcoming = visible.filter((item) => isFutureEvent(item, now));
+          featured = visible.slice(0, 5);
       pagination = res?.pagination || pagination;
       filters = { ...filters, ...query };
     } catch (err) {
@@ -675,16 +694,22 @@
   </div>
 
   <ScrollArea class="mt-3 w-full whitespace-nowrap">
-    <div class="flex gap-4 pb-3">
-      {#each featured as item (item.id)}
-        <EventCard
-          event={item}
-          variant="featured"
-          availabilityLabel={getAvailabilityLabel(item)}
-          onClick={() => openEventDetail(item)}
-        />
-      {/each}
-    </div>
+    {#if loadingEvents}
+      <div class="pb-3 text-sm text-muted-foreground">Cargando eventos destacados...</div>
+    {:else if !featured.length}
+      <div class="pb-3 text-sm text-muted-foreground">No hay eventos destacados disponibles.</div>
+    {:else}
+      <div class="flex gap-4 pb-3">
+        {#each featured as item (item.id)}
+          <EventCard
+            event={item}
+            variant="featured"
+            availabilityLabel={getAvailabilityLabel(item)}
+            onClick={() => openEventDetail(item)}
+          />
+        {/each}
+      </div>
+    {/if}
 
     <Scrollbar orientation="horizontal" />
   </ScrollArea>
@@ -695,16 +720,24 @@
   </div>
 
   <!-- Grid responsivo -->
-  <div class="mt-3 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-    {#each upcoming as e (e.id)}
-      <EventCard
-        event={e}
-        variant="upcoming"
-        availabilityLabel={getAvailabilityLabel(e)}
-        onClick={() => openEventDetail(e)}
-      />
-    {/each}
-  </div>
+  {#if loadingEvents}
+    <div class="mt-3 text-sm text-muted-foreground">Cargando próximos eventos...</div>
+  {:else if !upcoming.length}
+    <div class="mt-3 rounded-xl border border-dashed bg-background/60 px-4 py-6 text-center text-sm text-muted-foreground">
+      No hay próximos eventos disponibles.
+    </div>
+  {:else}
+    <div class="mt-3 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      {#each upcoming as e (e.id)}
+        <EventCard
+          event={e}
+          variant="upcoming"
+          availabilityLabel={getAvailabilityLabel(e)}
+          onClick={() => openEventDetail(e)}
+        />
+      {/each}
+    </div>
+  {/if}
 
   {#if pagination.totalPages > 1}
     <div class="mt-4 flex items-center justify-between">

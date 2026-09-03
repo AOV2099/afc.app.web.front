@@ -2,9 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
+	buildManualHoursAdjustmentPayload,
 	buildAdminUserCreatePayload,
 	buildAdminUserEditPayload,
 	getAdminCareerScope,
+	isManualHoursEligibleUser,
 	positiveCareerId
 } from '../src/lib/services/adminUserCareerScope.js';
 
@@ -83,5 +85,32 @@ test('scoped edit payload never sends a career change but global edit can', () =
 	assert.deepEqual(
 		buildAdminUserEditPayload({ form, selectedUser, isGlobalAdmin: true }),
 		{ firstName: 'Ana María', career_id: 9, role: 'admin' }
+	);
+});
+
+test('manual hours are available to any user with an 8-to-10 digit account number', () => {
+	assert.equal(isManualHoursEligibleUser({ role: 'visitor', student_id: '123456789' }), true);
+	assert.equal(isManualHoursEligibleUser({ role: 'student', student_id: '123456789' }), true);
+	assert.equal(isManualHoursEligibleUser({ role: 'staff', student_id: '123456789' }), true);
+	assert.equal(isManualHoursEligibleUser({ role: 'student', student_id: '12345678' }), true);
+	assert.equal(isManualHoursEligibleUser({ role: 'student', student_id: '1234567890' }), true);
+	assert.equal(isManualHoursEligibleUser({ role: 'visitor', student_id: null }), false);
+	assert.equal(isManualHoursEligibleUser({ role: 'visitor', student_id: '123' }), false);
+});
+
+test('manual hours payload trims auditable fields without converting decimal text', () => {
+	assert.deepEqual(
+		buildManualHoursAdjustmentPayload({
+			hours: ' 2.50 ',
+			category: ' culturales ',
+			motive: ' Participación extraordinaria ',
+			requestId: ' request-id '
+		}),
+		{
+			hours: '2.50',
+			category: 'culturales',
+			motive: 'Participación extraordinaria',
+			requestId: 'request-id'
+		}
 	);
 });

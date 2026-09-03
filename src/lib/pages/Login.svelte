@@ -8,6 +8,7 @@
 	import { Label } from '$lib/components/ui/label';
 	import { Separator } from '$lib/components/ui/separator';
 	import { authApi, clearClientRole, getHomePathByRole } from '$lib/services/api';
+	import { APP_VERSION } from '$lib/config/app.js';
 	import { GOOGLE_AUTH_MODE, GOOGLE_AUTH_URL, GOOGLE_CLIENT_ID } from '$lib/services/config';
 	import { loadGoogleIdentityServices, requestGoogleAuthorizationCode } from '$lib/services/googleAuth';
 	import { setCurrentUser } from '../../routes/store';
@@ -202,11 +203,6 @@
 					</button>
 				</div>
 
-				<div class="flex justify-end">
-					<a class="text-base font-semibold text-blue-600 hover:underline" href="/login">
-						¿Olvidaste tu contraseña?
-					</a>
-				</div>
 			</div>
 
 			{#if error}
@@ -265,5 +261,7 @@
 				{/if}
 			</Button>
 		</div>
+
+		<p class="mt-8 text-center text-xs font-medium text-slate-400">Versión {APP_VERSION}</p>
 	</div>
 </div>

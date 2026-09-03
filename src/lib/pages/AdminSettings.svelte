@@ -1,5 +1,6 @@
 <script>
 	import { goto } from '$app/navigation';
+	import { APP_VERSION } from '$lib/config/app.js';
 	import { authApi, clearClientRole } from '$lib/services/api';
 
 	import { Card, CardContent } from '$lib/components/ui/card';
@@ -67,4 +68,6 @@
 			{error}
 		</div>
 	{/if}
+
+	<p class="mt-8 text-center text-xs font-medium text-muted-foreground">Versión {APP_VERSION}</p>
 </section>

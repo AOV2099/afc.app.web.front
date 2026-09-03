@@ -13,6 +13,10 @@
 	import { createTicketQrDataUrl } from '$lib/services/qrCodeService';
 	import { getEventCategoryMeta } from '$lib/catalogs/eventCategories';
 	import { getEventCategoryIcon } from '$lib/catalogs/eventCategoryIcons';
+	import {
+		isPastEvent,
+		isVisibleToUser
+	} from '$lib/utils/events.js';
 
 	import {
 		Bell,
@@ -127,6 +131,9 @@
 		}
 		if (registrationStatus === 'cancel_pending') {
 			return { label: 'Baja en revisión', disabled: true, action: 'none' };
+		}
+		if (isPastEvent(item)) {
+			return { label: 'Evento finalizado', disabled: true, action: 'none' };
 		}
 
 		return { label: 'Inscribirse ahora', disabled: false, action: 'register' };
@@ -270,7 +277,8 @@
 			place: event?.location || event?.attributes?.location || 'Sin ubicación',
 			organizer: event?.organizer || event?.attributes?.organizer || 'Sin organizador',
 			description: event?.description || '',
-			availabilityLabel: ''
+			availabilityLabel: isPastEvent(event) ? 'Este evento ya finalizó.' : '',
+			isPast: isPastEvent(event)
 		};
 	}
 
@@ -279,9 +287,12 @@
 		recommendedError = '';
 
 		try {
+			const now = Date.now();
 			const res = await publicEventsApi.listEvents({ page: 1, pageSize: 12 });
 			const events = Array.isArray(res?.events) ? res.events : [];
-			recommendedEvents = events.map(mapEventToRecommendedCard);
+			recommendedEvents = events
+				.filter((event) => isVisibleToUser(event, now))
+				.map(mapEventToRecommendedCard);
 		} catch (e) {
 			recommendedEvents = [];
 			recommendedError = e?.message || 'No se pudieron cargar los eventos.';
@@ -568,12 +579,14 @@
 			<div class="flex gap-4 pb-3">
 				{#each recommendedEvents as r (r.id)}
 					<Card
-						onclick={() => openEventDetail(r)}
-						onkeydown={(event) => event.key === 'Enter' && openEventDetail(r)}
+						onclick={() => !r.isPast && openEventDetail(r)}
+						onkeydown={(event) => !r.isPast && event.key === 'Enter' && openEventDetail(r)}
 						role="button"
-						tabindex="0"
+						aria-disabled={r.isPast}
+						tabindex={r.isPast ? '-1' : '0'}
 						aria-label={`Ver evento: ${r.title}`}
-						class="w-[260px] overflow-hidden rounded-2xl border pt-0 sm:w-[290px]"
+						class={`w-[260px] overflow-hidden rounded-2xl border pt-0 transition sm:w-[290px] ${r.isPast ? 'pointer-events-none cursor-not-allowed border-slate-300 bg-slate-100 opacity-60 grayscale select-none' : ''}`}
+						data-past={r.isPast ? 'true' : undefined}
 					>
 						<div
 							class="relative h-32 w-full bg-muted"
@@ -586,6 +599,11 @@
 									{r.category}
 								</span>
 							</div>
+							{#if r.isPast}
+								<span class="absolute right-3 bottom-3 rounded-lg bg-slate-800 px-2 py-1 text-xs font-semibold text-white">
+									Finalizado
+								</span>
+							{/if}
 						</div>
 
 						<CardContent class="space-y-2 p-4">

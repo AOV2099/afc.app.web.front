@@ -2,6 +2,7 @@
   import { Badge } from "$lib/components/ui/badge";
   import { Card, CardContent } from "$lib/components/ui/card";
   import { cn } from "$lib/utils";
+  import { isPastEvent } from "$lib/utils/events.js";
   import { CalendarDays, MapPin, User } from "lucide-svelte";
 
   export let event;
@@ -29,12 +30,15 @@
   };
 
   $: currentVariant = variantClasses[variant] || variantClasses.upcoming;
+  $: past = isPastEvent(event);
 
   function handleClick() {
+    if (past) return;
     if (typeof onClick === "function") onClick();
   }
 
   function handleKeydown(eventObj) {
+    if (past) return;
     if (eventObj.key === "Enter" || eventObj.key === " ") {
       eventObj.preventDefault();
       handleClick();
@@ -43,10 +47,16 @@
 </script>
 
 <Card
-  class={cn("overflow-hidden rounded-2xl border pt-0", currentVariant.card)}
+  class={cn(
+    "overflow-hidden rounded-2xl border pt-0 transition",
+    currentVariant.card,
+    past && "pointer-events-none cursor-not-allowed border-slate-300 bg-slate-100 opacity-60 grayscale select-none"
+  )}
+  data-past={past ? "true" : undefined}
   role="button"
+  aria-disabled={past}
   aria-label={variant === "featured" ? `Ver evento destacado: ${event.title}` : `Ver evento: ${event.title}`}
-  tabindex="0"
+  tabindex={past ? "-1" : "0"}
   onclick={handleClick}
   onkeydown={handleKeydown}
 >
@@ -73,6 +83,12 @@
         </Badge>
       {/if}
     </div>
+
+    {#if past}
+      <Badge class="absolute right-3 bottom-3 rounded-lg bg-slate-800 text-white hover:bg-slate-800">
+        Finalizado
+      </Badge>
+    {/if}
   </div>
 
   <CardContent class={currentVariant.content}>

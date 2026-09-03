@@ -6,6 +6,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import { Badge } from '$lib/components/ui/badge';
 	import { adminEventsApi, adminRequestsApi } from '$lib/services/api';
+	import { isFutureEvent, isPastEvent } from '$lib/utils/events.js';
 
 	import { Bell, CalendarDays, CalendarPlus2, ClipboardList, Eye, QrCode } from 'lucide-svelte';
 
@@ -54,7 +55,7 @@
 		}
 	];
 
-	$: upcomingEvents = (Array.isArray(events) ? events : []).map((e) => {
+	$: upcomingEvents = (Array.isArray(events) ? events : []).filter((event) => isFutureEvent(event)).map((e) => {
 		const startsAt = e?.starts_at ? new Date(e.starts_at) : null;
 		const endsAt = e?.ends_at ? new Date(e.ends_at) : null;
 		const isValidStart = startsAt && !Number.isNaN(startsAt.getTime());
@@ -79,6 +80,8 @@
 
 		return {
 			id: String(e?.id || e?.event_id || Math.random()),
+			isPast: isPastEvent(e),
+			isCareerRestricted: e?.can_manage === false,
 			dateMonth: isValidStart
 				? startsAt.toLocaleString('es-MX', { month: 'short' }).toUpperCase()
 				: '---',
@@ -126,7 +129,11 @@
 
 		try {
 			const [eventsRes, pendingRes] = await Promise.all([
-				adminEventsApi.listEvents({ page: 1, pageSize: 8 }),
+				adminEventsApi.listEvents({
+					page: 1,
+					pageSize: 8,
+					starts_from: new Date().toISOString()
+				}),
 				adminRequestsApi.listPending({ page: 1, pageSize: 5 })
 			]);
 
@@ -288,7 +295,7 @@
 					<div class="text-sm text-muted-foreground">Sin solicitudes pendientes.</div>
 				{/if}
 				{#each requests as r (r.id)}
-					<Card class="rounded-3xl border bg-card text-card-foreground shadow-sm">
+					<Card class={`rounded-3xl border bg-card text-card-foreground shadow-sm ${e.isPast || e.isCareerRestricted ? 'border-slate-300 bg-slate-100 opacity-60 grayscale' : ''}`}>
 						<CardContent class="p-5">
 							<div class="flex items-start justify-between gap-3">
 								<div class="flex items-center gap-3">
@@ -422,7 +429,9 @@
 								</div>
 
 								<div class="text-right">
-									<div class="text-[14px] font-extrabold text-blue-600">{e.metaRightTop}</div>
+									<div class="text-[14px] font-extrabold text-blue-600">
+										{e.isCareerRestricted ? 'Otra carrera' : e.metaRightTop}
+									</div>
 									<div class="text-[12px] font-semibold text-slate-500">{e.metaRightBottom}</div>
 								</div>
 							</div>
