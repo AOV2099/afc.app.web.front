@@ -6,6 +6,7 @@ import {
 	buildAdminUserCreatePayload,
 	buildAdminUserEditPayload,
 	getAdminCareerScope,
+	getAssignableAdminUserRoles,
 	isManualHoursEligibleUser,
 	positiveCareerId
 } from '../src/lib/services/adminUserCareerScope.js';
@@ -33,6 +34,21 @@ test('derives global, scoped, and denied admin career states', () => {
 	});
 	assert.equal(getAdminCareerScope({ role: 'admin', career_id: 7 }).isScopedAdmin, true);
 	assert.equal(getAdminCareerScope({ role: 'admin' }).hasCareerAdminAccess, false);
+});
+
+test('only global admins can assign admin and auditor roles', () => {
+	assert.deepEqual(getAssignableAdminUserRoles({ role: 'admin', career_id: 1 }), [
+		'admin',
+		'staff',
+		'student',
+		'auditor',
+		'visitor'
+	]);
+	assert.deepEqual(getAssignableAdminUserRoles({ role: 'admin', career_id: 7 }), [
+		'staff',
+		'student',
+		'visitor'
+	]);
 });
 
 test('scoped create payload always forces the current admin career', () => {

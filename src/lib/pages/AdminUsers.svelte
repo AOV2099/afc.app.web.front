@@ -23,6 +23,7 @@
 		buildAdminUserCreatePayload,
 		buildAdminUserEditPayload,
 		buildManualHoursAdjustmentPayload,
+		getAssignableAdminUserRoles,
 		getAdminCareerScope,
 		isManualHoursEligibleUser,
 		normalizeAdminStudentId,
@@ -163,6 +164,7 @@
 	let importDisabledMessage = '';
 	let canImportStudents = false;
 	let adminCareerScope = null;
+	let assignableRoleOptions = [];
 
 	const roleOptions = ['admin', 'staff', 'student', 'auditor', 'visitor'];
 	const statusOptions = Object.keys(USER_STATUS_CATALOG);
@@ -216,6 +218,7 @@
 				: '';
 	$: importDisabledMessage = accessDisabledMessage;
 	$: canImportStudents = !importDisabledMessage;
+	$: assignableRoleOptions = getAssignableAdminUserRoles(currentUser);
 	$: if (isScopedAdmin && currentCareerId !== null && careerFilter !== String(currentCareerId)) {
 		careerFilter = String(currentCareerId);
 	}
@@ -289,9 +292,9 @@
 	}
 
 	$: editRoleOptions =
-		selectedUser?.role && !roleOptions.includes(String(selectedUser.role).toLowerCase())
-			? [...roleOptions, String(selectedUser.role).toLowerCase()]
-			: roleOptions;
+		selectedUser?.role && !assignableRoleOptions.includes(String(selectedUser.role).toLowerCase())
+			? [...assignableRoleOptions, String(selectedUser.role).toLowerCase()]
+			: assignableRoleOptions;
 
 	function fullName(u) {
 		return [u.first_name, u.last_name].filter(Boolean).join(' ').trim() || 'Sin nombre';
@@ -1787,7 +1790,7 @@
 			<div class="space-y-2">
 				<Label>Rol</Label>
 				<select class="h-10 w-full rounded-md border px-3" bind:value={createForm.role}>
-					{#each roleOptions as role}
+					{#each assignableRoleOptions as role}
 						<option value={role}>{formatRole(role)}</option>
 					{/each}
 				</select>

@@ -18,6 +18,13 @@ export function getAdminCareerScope(currentUser) {
 	};
 }
 
+export function getAssignableAdminUserRoles(currentUser) {
+	const allRoles = ['admin', 'staff', 'student', 'auditor', 'visitor'];
+	return getAdminCareerScope(currentUser).isGlobalAdmin
+		? allRoles
+		: allRoles.filter((role) => role !== 'admin' && role !== 'auditor');
+}
+
 export function normalizeAdminStudentId(value) {
 	return String(value || '').slice(0, 10);
 }
