@@ -29,7 +29,7 @@
 		normalizeAdminStudentId,
 		positiveCareerId
 	} from '$lib/services/adminUserCareerScope';
-	import { USER_STATUS_CATALOG } from '../../routes/store';
+	import { USER_ROLE_CATALOG, USER_STATUS_CATALOG, catalogLabel } from '../../routes/store';
 
 	import { Card, CardContent } from '$lib/components/ui/card';
 	import { Button } from '$lib/components/ui/button';
@@ -173,7 +173,7 @@
 	const pageSizeStorageKey = 'afc.admin.users.pageSize';
 	const sortableColumns = [
 		{ field: 'name', label: 'Usuario', className: 'pl-4' },
-		{ field: 'email', label: 'Email', className: '' },
+		{ field: 'email', label: 'Correo electrónico', className: '' },
 		{ field: 'account', label: 'Matrícula', className: '' },
 		{ field: 'hours', label: 'Total de horas', className: '' },
 		{ field: 'career', label: 'Carrera', className: '' },
@@ -267,8 +267,7 @@
 	}
 
 	function formatRole(role) {
-		if (!role) return 'Visitor';
-		return role.charAt(0).toUpperCase() + role.slice(1);
+		return catalogLabel(USER_ROLE_CATALOG, role || 'visitor');
 	}
 
 	function formatHours(value) {
@@ -449,7 +448,9 @@
 			hoursImportSummary = {
 				rows: Number(response.summary.rows || 0),
 				users: Number(response.summary.users || 0),
-				totalHours: Number(response.summary.total_hours || 0)
+				totalHours: Number(response.summary.total_hours || 0),
+				creditedHours: Number(response.summary.credited_hours ?? response.summary.total_hours ?? 0),
+				cappedRows: Number(response.summary.capped_rows || 0)
 			};
 		} catch (error) {
 			hoursImportErrors = normalizeHoursCsvErrors(error);
@@ -467,7 +468,10 @@
 			const response = await adminUsersApi.commitHoursCsv(hoursImportId);
 			if (!response?.ok) throw new Error(response?.message || 'No se pudo completar la carga.');
 			toast.success(
-				`Se agregaron ${Number(response.total_hours || 0).toLocaleString('es-MX', { maximumFractionDigits: 2 })} horas en ${Number(response.adjusted || 0)} ajustes.`
+				`Se agregaron ${Number(response.total_hours || 0).toLocaleString('es-MX', { maximumFractionDigits: 2 })} horas en ${Number(response.adjusted || 0)} ajustes.` +
+					(Number(response.capped_rows || 0) > 0
+						? ` ${Number(response.capped_rows)} se limitaron por la meta AFC de la carrera.`
+						: '')
 			);
 			hoursImportOpen = false;
 			resetHoursImport();
@@ -726,7 +730,7 @@
 		try {
 			const payload = toUserPayload(createForm);
 			if (!payload.email || !payload.password || !payload.firstName || !payload.lastName) {
-				throw new Error('Email, contraseña, nombre y apellido son obligatorios.');
+				throw new Error('Correo electrónico, contraseña, nombre y apellido son obligatorios.');
 			}
 			if (payload.password.length < 8) {
 				throw new Error('La contraseña debe tener al menos 8 caracteres.');
@@ -837,10 +841,14 @@
 			if (!res?.ok) throw new Error(res?.message || 'No se pudieron agregar las horas.');
 
 			const added = Number(res?.adjustment?.hours_added ?? hours);
+			const requested = Number(res?.adjustment?.hours_requested ?? added);
 			const totalHours = Number(res?.adjustment?.total_hours ?? 0);
 			hoursOpen = false;
 			toast.success(
-				`${added.toLocaleString('es-MX', { maximumFractionDigits: 2 })} horas agregadas. Total: ${totalHours.toLocaleString('es-MX', { maximumFractionDigits: 2 })} horas.`
+				`${added.toLocaleString('es-MX', { maximumFractionDigits: 2 })} horas agregadas. Total: ${totalHours.toLocaleString('es-MX', { maximumFractionDigits: 2 })} horas.` +
+					(added < requested
+						? ` Se limitó por la meta AFC de ${res?.adjustment?.hours_goal} horas de su carrera.`
+						: '')
 			);
 			hoursUser = null;
 			hoursForm = { hours: '', category: '', motive: '', requestId: '' };
@@ -992,7 +1000,7 @@
 						<Search class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
 						<Input
 							class="h-11 rounded-2xl bg-background pl-9 shadow-sm"
-							placeholder="Buscar por nombre, email, matrícula o carrera..."
+							placeholder="Buscar por nombre, correo, matrícula o carrera..."
 							bind:value={q}
 							autocomplete="off"
 						/>
@@ -1383,10 +1391,16 @@
 						<div class="text-xs text-muted-foreground">Usuarios</div>
 					</div>
 					<div class="rounded-2xl border border-emerald-200 bg-emerald-50 p-3">
-						<div class="text-2xl font-semibold text-emerald-700">{hoursImportSummary.totalHours}</div>
-						<div class="text-xs text-emerald-700">Horas</div>
+						<div class="text-2xl font-semibold text-emerald-700">{hoursImportSummary.creditedHours}</div>
+						<div class="text-xs text-emerald-700">Horas a acreditar</div>
 					</div>
 				</div>
+				{#if hoursImportSummary.cappedRows > 0}
+					<p class="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+						{hoursImportSummary.cappedRows} fila(s) alcanzan la meta AFC de su carrera: de {hoursImportSummary.totalHours} horas del CSV
+						solo se acreditarán {hoursImportSummary.creditedHours}.
+					</p>
+				{/if}
 				<p class="rounded-xl border bg-white px-3 py-2 text-sm text-slate-700">
 					Todos los ajustes usarán la categoría
 					<span class="font-medium">
@@ -1690,7 +1704,7 @@
 
 		<div class="grid gap-4 py-2 sm:grid-cols-2">
 			<div class="space-y-2 sm:col-span-2">
-				<Label>Email *</Label>
+				<Label>Correo electrónico *</Label>
 				<Input bind:value={createForm.email} type="email" placeholder="usuario@correo.com" />
 			</div>
 
@@ -1823,7 +1837,7 @@
 
 		<div class="grid gap-4 py-2 sm:grid-cols-2">
 			<div class="space-y-2 sm:col-span-2">
-				<Label>Email</Label>
+				<Label>Correo electrónico</Label>
 				<Input bind:value={editForm.email} type="email" />
 			</div>
 

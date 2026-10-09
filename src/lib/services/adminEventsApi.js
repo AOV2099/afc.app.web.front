@@ -19,7 +19,7 @@ function getHttpMessageByStatus(status, fallbackMessage) {
 	if (status === 404) return 'No se encontró el evento solicitado.';
 	if (status === 409) return fallbackMessage || 'Este ticket ya fue utilizado para esta sesión.';
 	if (status >= 500) return 'Error del servidor. Intenta de nuevo en unos minutos.';
-	return fallbackMessage || `Request failed (${status})`;
+	return fallbackMessage || `La solicitud falló (${status}).`;
 }
 
 function getCheckinReasonMessage(details = {}) {

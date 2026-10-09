@@ -21,6 +21,14 @@
 	import { Input } from '$lib/components/ui/input';
 	import { Textarea } from '$lib/components/ui/textarea';
 	import { Switch } from '$lib/components/ui/switch';
+	import AfcHoursSection from '$lib/components/AfcHoursSection.svelte';
+	import { afcCatalog, ensureAfcCatalog } from '$lib/stores/afcCatalog.js';
+	import {
+		afcStateFromEvent,
+		buildAfcValuationPayload,
+		createAfcState,
+		validateAfcForSave
+	} from '$lib/utils/afcHoursForm.js';
 
 	export let eventId = '';
 
@@ -29,11 +37,14 @@
 	const resubmissionPolicyOptions = Object.values(EVENT_RESUBMISSION_POLICY_CATALOG);
 	const cancelPolicyOptions = Object.values(EVENT_CANCEL_POLICY_CATALOG);
 	const categoryOptions = EVENT_CATEGORY_OPTIONS;
-	const MAX_EVENT_HOURS = 100;
 
 	let loading = false;
 	let submitting = false;
 	let loadError = '';
+	let afcState = createAfcState();
+	let afcEvent = null;
+	let afcError = '';
+	let hasAttendance = false;
 
 	let form = {
 		title: '',
@@ -41,7 +52,6 @@
 		coverImageUrl: '',
 		startsAt: '',
 		endsAt: '',
-		hoursValue: 0,
 		status: 'draft',
 		registrationMode: 'auto',
 		resubmissionPolicy: 'only_changes_requested',
@@ -122,12 +132,12 @@
 				'',
 			startsAt: isoToLocalDatetime(ev.starts_at),
 			endsAt: isoToLocalDatetime(ev.ends_at),
-			hoursValue: Number(ev.hours_value ?? 0),
 			status: ev.status || 'draft',
 			registrationMode: ev.registration_mode || 'auto',
 			resubmissionPolicy: ev.resubmission_policy || 'only_changes_requested',
 			allowSelfCheckin: Boolean(ev.allow_self_checkin),
-			geoEnforced: Boolean(ev.geo_enforced),
+			// Geocerca deshabilitada temporalmente; restaurar: geoEnforced: Boolean(ev.geo_enforced),
+			geoEnforced: false,
 			cancelPolicy: ev.cancel_policy || 'free_cancel',
 			cancelDeadline: isoToLocalDatetime(ev.cancel_deadline),
 			category: normalizeEventCategory(ev?.category, 'general'),
@@ -138,16 +148,20 @@
 			geoRadiusM: ev?.geo?.radius_m ?? 120,
 			geoStrictAccuracyM: ev?.geo?.strict_accuracy_m ?? ''
 		};
+		afcEvent = ev;
+		afcState = afcStateFromEvent(ev);
+		afcError = '';
+		hasAttendance = Boolean(ev?.has_attendance);
 	}
 
-	function buildSingleSession(startsAtIso, endsAtIso, hoursValue) {
+	function buildSingleSession(startsAtIso, endsAtIso) {
 		if (!startsAtIso || !endsAtIso) return [];
 		return [
 			{
 				starts_at: startsAtIso,
 				ends_at: endsAtIso,
 				label: 'Sesión principal',
-				hours_value: Number(hoursValue) || 0
+				hours_value: null
 			}
 		];
 	}
@@ -155,19 +169,25 @@
 	function buildPayload() {
 		const startsAtIso = localDatetimeToIso(form.startsAt);
 		const endsAtIso = localDatetimeToIso(form.endsAt);
+		const afcValuation = hasAttendance
+			? null
+			: buildAfcValuationPayload(afcState, {
+					catalog: $afcCatalog.types,
+					defaultDate: String(form.startsAt || '').slice(0, 10)
+				});
 		return {
 			title: form.title?.trim(),
 			description: form.description?.trim() || null,
 			category: form.category,
-			starts_at: startsAtIso,
-			ends_at: endsAtIso,
-			hours_value: Number(form.hoursValue) || 0,
+			...(hasAttendance ? {} : { starts_at: startsAtIso, ends_at: endsAtIso }),
+			...(afcValuation ? { afc_valuation: afcValuation } : {}),
 			capacity_enabled: Boolean(form.capacityEnabled),
 			capacity: form.capacityEnabled ? (form.cupo === '' ? null : Number(form.cupo)) : null,
 			status: form.status,
 			registration_mode: form.registrationMode,
 			resubmission_policy: form.resubmissionPolicy,
-			allow_self_checkin: Boolean(form.allowSelfCheckin),
+			// Self check-in oculto por ahora; sin enviarlo el backend conserva el valor actual.
+			// allow_self_checkin: Boolean(form.allowSelfCheckin),
 			geo_enforced: Boolean(form.geoEnforced),
 			cancel_policy: form.cancelPolicy,
 			cancel_deadline: localDatetimeToIso(form.cancelDeadline),
@@ -184,27 +204,16 @@
 							form.geoStrictAccuracyM === '' ? null : Number(form.geoStrictAccuracyM)
 					}
 					: null,
-			sessions: buildSingleSession(startsAtIso, endsAtIso, form.hoursValue)
+			sessions: hasAttendance ? undefined : buildSingleSession(startsAtIso, endsAtIso)
 		};
 	}
 
-	function parseHoursInput(value) {
-		const normalized = String(value ?? '').trim();
-		if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) return null;
-		const parsed = Number(normalized);
-		return Number.isFinite(parsed) ? parsed : null;
-	}
-
 	function validatePayload(payload) {
-		if (!payload.title || !payload.starts_at || !payload.ends_at) {
-			return 'Título, inicio y fin son obligatorios.';
-		}
-		if (new Date(payload.ends_at) <= new Date(payload.starts_at)) {
-			return 'La fecha/hora de fin debe ser mayor a la de inicio.';
-		}
-		const hoursValue = parseHoursInput(form.hoursValue);
-		if (hoursValue === null || hoursValue < 0 || hoursValue > MAX_EVENT_HOURS) {
-			return `Las horas acreditables deben ser un decimal entre 0 y ${MAX_EVENT_HOURS}.`;
+		if (hasAttendance) {
+			if (!payload.title) return 'El título es obligatorio.';
+		} else {
+			const scheduleError = validateSchedule(payload);
+			if (scheduleError) return scheduleError;
 		}
 		if (payload.capacity_enabled) {
 			if (!Number.isInteger(payload.capacity) || payload.capacity <= 0) {
@@ -216,6 +225,27 @@
 		}
 		return '';
 	}
+
+	function validateSchedule(payload) {
+		if (!payload.title || !payload.starts_at || !payload.ends_at) {
+			return 'Título, inicio y fin son obligatorios.';
+		}
+		if (new Date(payload.ends_at) <= new Date(payload.starts_at)) {
+			return 'La fecha/hora de fin debe ser mayor a la de inicio.';
+		}
+		const afcValidation = validateAfcForSave(afcState, {
+			catalog: $afcCatalog.types,
+			status: payload.status,
+			defaultDate: String(form.startsAt || '').slice(0, 10),
+			legacyHours: afcEvent?.afc_valuation ? null : (afcEvent?.hours_value ?? null)
+		});
+		afcError = afcValidation.message;
+		return afcValidation.ok ? '' : afcValidation.message;
+	}
+
+	$: lockedStatusValues = hasAttendance
+		? ['draft', 'published'].filter((value) => value !== afcEvent?.status)
+		: [];
 
 	$: {
 		const nextUrl = String(form.coverImageUrl || '').trim();
@@ -275,7 +305,10 @@
 		}
 	}
 
-	onMount(loadEvent);
+	onMount(() => {
+		ensureAfcCatalog();
+		loadEvent();
+	});
 </script>
 
 <div class="mx-auto w-full max-w-screen-md px-4 pb-16 pt-6 sm:px-6 lg:px-8">
@@ -290,6 +323,12 @@
 
 	<Card class="rounded-3xl border bg-card text-card-foreground">
 		<CardContent class="space-y-4 p-5">
+			{#if hasAttendance}
+				<div class="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+					Este evento ya tiene asistencias registradas. No se pueden cambiar sus fechas ni sus horas AFC.
+					Para corregir horas de un alumno usa el ajuste manual en Usuarios.
+				</div>
+			{/if}
 			<div>
 				<div class="text-sm font-semibold text-blue-600">Título</div>
 				<Input class="mt-2 h-11 rounded-2xl" bind:value={form.title} />
@@ -330,11 +369,11 @@
 			<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
 				<div>
 					<div class="text-sm font-semibold text-blue-600">Inicio</div>
-					<Input class="mt-2 h-11 rounded-2xl" type="datetime-local" bind:value={form.startsAt} />
+					<Input class="mt-2 h-11 rounded-2xl" type="datetime-local" bind:value={form.startsAt} disabled={hasAttendance} />
 				</div>
 				<div>
 					<div class="text-sm font-semibold text-blue-600">Fin</div>
-					<Input class="mt-2 h-11 rounded-2xl" type="datetime-local" bind:value={form.endsAt} />
+					<Input class="mt-2 h-11 rounded-2xl" type="datetime-local" bind:value={form.endsAt} disabled={hasAttendance} />
 				</div>
 			</div>
 
@@ -346,11 +385,23 @@
 				<Switch bind:checked={form.capacityEnabled} />
 			</div>
 
+			<div class="space-y-3 rounded-2xl border p-4">
+				<div class="text-sm font-semibold text-blue-600">Horas AFC</div>
+				<AfcHoursSection
+					bind:state={afcState}
+					catalog={$afcCatalog.types}
+					catalogStatus={$afcCatalog.status === 'idle' ? 'loading' : $afcCatalog.status}
+					catalogError={$afcCatalog.error}
+					idPrefix="edit-page-afc"
+					defaultDate={String(form.startsAt || '').slice(0, 10)}
+					{eventId}
+					legacyHours={afcEvent?.afc_valuation ? null : (afcEvent?.hours_value ?? null)}
+					error={afcError}
+					disabled={hasAttendance}
+				/>
+			</div>
+
 			<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-				<div>
-					<div class="text-sm font-semibold text-blue-600">Horas acreditables</div>
-					<Input class="mt-2 h-11 rounded-2xl" type="number" step="0.01" min="0" max={MAX_EVENT_HOURS} bind:value={form.hoursValue} />
-				</div>
 				{#if form.capacityEnabled}
 					<div>
 						<div class="text-sm font-semibold text-blue-600">Cupo</div>
@@ -366,7 +417,7 @@
 						<div class="text-sm font-semibold text-blue-600">Estatus</div>
 						<select class="mt-2 h-11 w-full rounded-2xl border px-3" bind:value={form.status}>
 							{#each statusOptions as status}
-								<option value={status.value}>{status.label}</option>
+								<option value={status.value} disabled={lockedStatusValues.includes(status.value)}>{status.label}</option>
 							{/each}
 						</select>
 					</div>
@@ -419,14 +470,22 @@
 				</div>
 			</div>
 
+			<!--
+			Self check-in oculto: permitiría que el propio alumno registre su asistencia sin escaneo del staff.
+			Aún no existe ese flujo; solo se guardaba events.allow_self_checkin.
 			<div class="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3">
 				<div class="text-sm font-semibold">Permitir self check-in</div>
 				<Switch bind:checked={form.allowSelfCheckin} />
 			</div>
+			-->
 
-			<div class="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3">
-				<div class="text-sm font-semibold">Geocerca obligatoria</div>
-				<Switch bind:checked={form.geoEnforced} />
+			<!-- Geocerca deshabilitada temporalmente: con la ubicación activa el staff no podía registrar check-ins. -->
+			<div class="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3 opacity-60">
+				<div>
+					<div class="text-sm font-semibold">Geocerca obligatoria</div>
+					<div class="text-xs text-muted-foreground">Temporalmente deshabilitada.</div>
+				</div>
+				<Switch bind:checked={form.geoEnforced} disabled />
 			</div>
 
 			{#if form.geoEnforced}

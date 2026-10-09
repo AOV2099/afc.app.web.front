@@ -137,28 +137,43 @@
 		if (result === 'rejected') return 'Check-in rechazado por reglas del evento (geocerca/GPS).';
 		if (status === 400) return 'Datos inválidos para registrar check-in (evento/sesión/ticket).';
 		if (status === 401) return 'Sesión inválida. Inicia sesión nuevamente.';
-		if (status === 403) return 'No tienes permisos para registrar check-ins.';
+		if (status === 403) {
+			return String(details?.message || '').trim() || 'No tienes permisos para registrar check-ins.';
+		}
 		if (status === 404) return 'Evento o sesión no encontrados.';
 		if (status >= 500) return 'No se pudo procesar el check-in. Intenta de nuevo.';
-		if (message && !message.toLowerCase().includes('request failed')) return message;
+		if (message && !message.toLowerCase().includes('la solicitud falló')) return message;
 
 		return 'No se pudo registrar el check-in.';
 	}
 
+	const LOCATION_WAIT_MS = 2000;
+
+	// La ubicación es evidencia opcional: el `timeout` nativo no corre mientras el permiso
+	// está pendiente, así que se limita la espera para no bloquear el check-in.
 	async function getLocationEvidence() {
 		if (typeof navigator === 'undefined' || !navigator.geolocation) return {};
 
 		return new Promise((resolve) => {
-			navigator.geolocation.getCurrentPosition(
-				(position) =>
-					resolve({
-						client_lat: position.coords.latitude,
-						client_lng: position.coords.longitude,
-						accuracy_m: position.coords.accuracy
-					}),
-				() => resolve({}),
-				{ enableHighAccuracy: true, timeout: 1500, maximumAge: 10_000 }
-			);
+			const timer = setTimeout(() => resolve({}), LOCATION_WAIT_MS);
+			const finish = (value) => {
+				clearTimeout(timer);
+				resolve(value);
+			};
+			try {
+				navigator.geolocation.getCurrentPosition(
+					(position) =>
+						finish({
+							client_lat: Number(position.coords.latitude.toFixed(6)),
+							client_lng: Number(position.coords.longitude.toFixed(6)),
+							accuracy_m: Math.round(position.coords.accuracy)
+						}),
+					() => finish({}),
+					{ enableHighAccuracy: true, timeout: 1500, maximumAge: 10_000 }
+				);
+			} catch {
+				finish({});
+			}
 		});
 	}
 
@@ -493,14 +508,12 @@
 						<SwitchCamera size={18} />
 					</Button>
 
-					<Dialog.Root bind:open={dialogOpen}>
-						<Dialog.Trigger asChild>
-							<Button class="gap-2" disabled={isStarting}>
-								<Camera size={18} />
-								Cámaras
-							</Button>
-						</Dialog.Trigger>
+					<Button class="gap-2" disabled={isStarting} onclick={() => (dialogOpen = true)}>
+						<Camera size={18} />
+						Cámaras
+					</Button>
 
+					<Dialog.Root bind:open={dialogOpen}>
 						<Dialog.Content class="sm:max-w-lg mx-2">
 							<Dialog.Header>
 								<Dialog.Title>Seleccionar cámara</Dialog.Title>

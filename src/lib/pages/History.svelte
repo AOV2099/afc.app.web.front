@@ -23,7 +23,7 @@
     Download
   } from "lucide-svelte";
 
-  const HOURS_GOAL = 480;
+  const DEFAULT_HOURS_GOAL = 480;
 
   const CATEGORY_DESCRIPTIONS = {
     general: 'Categoría por defecto',
@@ -53,6 +53,7 @@
 
   let items = [];
   let totalHours = 0;
+  let hoursGoal = DEFAULT_HOURS_GOAL;
   let categoryBreakdown = [];
   let pagination = {
     page: 1,
@@ -182,6 +183,8 @@
       items = append ? [...items, ...mapped] : mapped;
 
       const responseTotalHours = Number(res?.total_hours);
+      const responseGoal = Number(res?.hours_goal);
+      if (Number.isFinite(responseGoal) && responseGoal > 0) hoursGoal = responseGoal;
       const loadedHours = items.reduce(
         (sum, item) => sum + (Number(item?.hoursDelta ?? 0) || 0),
         0
@@ -256,8 +259,8 @@
     loadHoursHistory(pagination.page + 1, true);
   }
 
-  $: progressPercent = Math.max(0, Math.min(100, (Number(totalHours || 0) / HOURS_GOAL) * 100));
-  $: remainingHours = Math.max(0, HOURS_GOAL - Number(totalHours || 0));
+  $: progressPercent = Math.max(0, Math.min(100, (Number(totalHours || 0) / hoursGoal) * 100));
+  $: remainingHours = Math.max(0, hoursGoal - Number(totalHours || 0));
   $: normalizedHistorySearch = normalizeSearchText(historySearch);
   $: filteredItems = !normalizedHistorySearch
     ? items
@@ -296,7 +299,7 @@
       <div class="mt-3 flex items-baseline gap-3">
         <div class="text-4xl font-semibold">{Number(totalHours || 0).toFixed(2)}</div>
         <div class="text-base text-muted-foreground">
-          de {HOURS_GOAL} hrs meta
+          de {hoursGoal} hrs meta
         </div>
       </div>
 
@@ -320,6 +323,11 @@
         <div class="mt-2 text-sm text-muted-foreground">
           {progressPercent.toFixed(1)}% completado · Restan {remainingHours.toFixed(2)} hrs
         </div>
+        {#if remainingHours <= 0}
+          <div class="mt-1 text-sm font-semibold text-emerald-700">
+            Meta alcanzada: puedes seguir inscribiéndote y asistiendo, pero ya no se suman horas.
+          </div>
+        {/if}
       </div>
 
       <div class="mt-5 rounded-2xl border bg-muted/30 p-4">

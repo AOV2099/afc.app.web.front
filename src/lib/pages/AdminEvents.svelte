@@ -3,6 +3,7 @@
   import { goto } from "$app/navigation";
   import { toast } from "svelte-sonner";
   import { adminEventsApi, adminStaffUsersApi } from "$lib/services/api";
+  import { EVENT_STATUS_CATALOG, catalogLabel } from "../../routes/store";
   import {
     EVENT_CATEGORY_OPTIONS,
     getEventCategoryMeta,
@@ -19,11 +20,19 @@
   import { Textarea } from "$lib/components/ui/textarea";
   import { Switch } from "$lib/components/ui/switch";
   import * as Dialog from "$lib/components/ui/dialog";
+  import AfcHoursSection from "$lib/components/AfcHoursSection.svelte";
+  import { afcCatalog, ensureAfcCatalog } from "$lib/stores/afcCatalog.js";
+  import {
+    afcStateFromEvent,
+    buildAfcValuationPayload,
+    createAfcState,
+    describeAfcEventHours,
+    validateAfcForSave,
+  } from "$lib/utils/afcHoursForm.js";
   import { CalendarDays, MapPin, Plus, User } from "lucide-svelte";
 
   const FALLBACK_IMAGE =
     "https://gaceta.cch.unam.mx/sites/default/files/styles/imagen_articulos_1920x1080/public/2020-07/video_mensaje_1.jpg?h=d1cb525d&itok=4PYz5F61";
-  const MAX_EVENT_HOURS = 100;
   const minimumEventDatetime = (() => {
     const now = new Date();
     const offset = now.getTimezoneOffset() * 60_000;
@@ -46,6 +55,10 @@
   let staffUsersError = "";
   let editOriginalStaffUserId = "";
   let editSelectedStaffUserId = "";
+  let editAfcState = createAfcState();
+  let editAfcEvent = null;
+  let editAfcError = "";
+  let editHasAttendance = false;
 
   let filters = {
     page: 1,
@@ -72,7 +85,6 @@
     organizer: "",
     startsAt: "",
     endsAt: "",
-    hoursValue: 0,
     status: "draft",
     registrationMode: "auto",
     resubmissionPolicy: "only_changes_requested",
@@ -268,26 +280,6 @@
     return dt.toISOString();
   }
 
-  function parseHoursInput(value) {
-    if (typeof value === "number") return Number.isFinite(value) ? value : null;
-    const normalized = String(value ?? "").trim();
-    if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) return null;
-    const parsed = Number(normalized);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-
-  function handleEditHoursInput(event) {
-    const cleaned = String(event.currentTarget.value ?? "")
-      .replace(",", ".")
-      .replace(/[^\d.]/g, "");
-    const [whole = "", ...fractionParts] = cleaned.split(".");
-    const sanitized = fractionParts.length
-      ? `${whole || "0"}.${fractionParts.join("").slice(0, 2)}`
-      : whole;
-    event.currentTarget.value = sanitized;
-    editForm.hoursValue = sanitized;
-  }
-
   function resolveCancelPolicyForPayload(policy) {
     if (policy === "free_until_deadline") return "free_cancel";
     return policy;
@@ -316,12 +308,12 @@
       organizer: ev.organizer || ev?.attributes?.organizer || "",
       startsAt: isoToLocalDatetime(ev.starts_at),
       endsAt: isoToLocalDatetime(ev.ends_at),
-      hoursValue: Number(ev.hours_value ?? 0),
       status: ev.status || "draft",
       registrationMode: ev.registration_mode || "auto",
       resubmissionPolicy: ev.resubmission_policy || "only_changes_requested",
       allowSelfCheckin: Boolean(ev.allow_self_checkin),
-      geoEnforced: Boolean(ev.geo_enforced),
+      // Geocerca deshabilitada temporalmente; restaurar: geoEnforced: Boolean(ev.geo_enforced),
+      geoEnforced: false,
       cancelPolicy: cancelPolicyUi,
       cancelDeadlineDate,
       cancelDeadlineTime,
@@ -337,6 +329,10 @@
     eventStaffCredentials = extractStaffCredentials(ev);
     editOriginalStaffUserId = resolveEventStaffUserId(ev);
     editSelectedStaffUserId = editOriginalStaffUserId;
+    editAfcEvent = ev;
+    editAfcState = afcStateFromEvent(ev);
+    editAfcError = "";
+    editHasAttendance = Boolean(ev?.has_attendance);
   }
 
   function extractStaffCredentials(eventData) {
@@ -464,6 +460,12 @@
   function buildUpdatePayload() {
     const startsAt = localDatetimeToIso(editForm.startsAt);
     const endsAt = localDatetimeToIso(editForm.endsAt);
+    const afcValuation = editHasAttendance
+      ? null
+      : buildAfcValuationPayload(editAfcState, {
+          catalog: $afcCatalog.types,
+          defaultDate: String(editForm.startsAt || "").slice(0, 10),
+        });
     const cancelDeadline =
       editForm.cancelPolicy === "free_until_deadline"
         ? toIsoFromDateTime(
@@ -478,9 +480,8 @@
       category: editForm.category,
       location: editForm.location?.trim() || null,
       organizer: editForm.organizer?.trim() || null,
-      starts_at: startsAt,
-      ends_at: endsAt,
-      hours_value: editForm.hoursValue,
+      ...(editHasAttendance ? {} : { starts_at: startsAt, ends_at: endsAt }),
+      ...(afcValuation ? { afc_valuation: afcValuation } : {}),
       capacity_enabled: Boolean(editForm.capacityEnabled),
       capacity: editForm.capacityEnabled
         ? editForm.cupo === ""
@@ -490,7 +491,8 @@
       status: editForm.status,
       registration_mode: editForm.registrationMode,
       resubmission_policy: editForm.resubmissionPolicy,
-      allow_self_checkin: Boolean(editForm.allowSelfCheckin),
+      // Self check-in oculto por ahora; sin enviarlo el backend conserva el valor actual.
+      // allow_self_checkin: Boolean(editForm.allowSelfCheckin),
       geo_enforced: Boolean(editForm.geoEnforced),
       cancel_policy: resolveCancelPolicyForPayload(editForm.cancelPolicy),
       cancel_deadline: cancelDeadline,
@@ -513,11 +515,7 @@
                   : Number(editForm.geoStrictAccuracyM),
             }
           : null,
-      sessions: buildSingleSession(
-        startsAt,
-        endsAt,
-        editForm.hoursValue,
-      ),
+      sessions: editHasAttendance ? undefined : buildSingleSession(startsAt, endsAt, null),
       ...(normalizeStaffUserId(editSelectedStaffUserId) &&
       normalizeStaffUserId(editSelectedStaffUserId) !==
         normalizeStaffUserId(editOriginalStaffUserId)
@@ -530,21 +528,11 @@
   }
 
   function validateUpdatePayload(payload) {
-    if (!payload.title || !payload.starts_at || !payload.ends_at) {
-      return "Título, inicio y fin son obligatorios.";
-    }
-    if (new Date(payload.ends_at) <= new Date(payload.starts_at)) {
-      return "La fecha/hora de fin debe ser mayor a la de inicio.";
-    }
-    if (new Date(payload.starts_at).getTime() < Date.now()) {
-      return "La fecha/hora de inicio no puede estar en el pasado.";
-    }
-    if (new Date(payload.ends_at).getTime() < Date.now()) {
-      return "La fecha/hora de fin no puede estar en el pasado.";
-    }
-    const hoursValue = parseHoursInput(payload.hours_value);
-    if (hoursValue === null || hoursValue < 0 || hoursValue > MAX_EVENT_HOURS) {
-      return `Las horas acreditables deben ser un decimal entre 0 y ${MAX_EVENT_HOURS}, sin letras.`;
+    if (editHasAttendance) {
+      if (!payload.title) return "El título es obligatorio.";
+    } else {
+      const scheduleError = validateEditSchedule(payload);
+      if (scheduleError) return scheduleError;
     }
     if (payload.geo_enforced && !payload.geo) {
       return "Si activas geocerca, captura latitud y longitud.";
@@ -567,6 +555,33 @@
     }
     return "";
   }
+
+  function validateEditSchedule(payload) {
+    if (!payload.title || !payload.starts_at || !payload.ends_at) {
+      return "Título, inicio y fin son obligatorios.";
+    }
+    if (new Date(payload.ends_at) <= new Date(payload.starts_at)) {
+      return "La fecha/hora de fin debe ser mayor a la de inicio.";
+    }
+    if (new Date(payload.starts_at).getTime() < Date.now()) {
+      return "La fecha/hora de inicio no puede estar en el pasado.";
+    }
+    if (new Date(payload.ends_at).getTime() < Date.now()) {
+      return "La fecha/hora de fin no puede estar en el pasado.";
+    }
+    const afcValidation = validateAfcForSave(editAfcState, {
+      catalog: $afcCatalog.types,
+      status: payload.status,
+      defaultDate: String(editForm.startsAt || "").slice(0, 10),
+      legacyHours: editAfcEvent?.afc_valuation ? null : editAfcEvent?.hours_value ?? null,
+    });
+    editAfcError = afcValidation.ok ? "" : afcValidation.message;
+    return afcValidation.ok ? "" : afcValidation.message;
+  }
+
+  $: lockedStatusValues = editHasAttendance
+    ? ["draft", "published"].filter((value) => value !== editAfcEvent?.status)
+    : [];
 
   $: {
     const nextUrl = String(editForm.coverImageUrl || "").trim();
@@ -661,6 +676,7 @@
   onMount(() => {
     loadEvents();
     loadStaffUsers();
+    ensureAfcCatalog();
   });
 </script>
 
@@ -764,13 +780,19 @@
             </Badge>
             <Badge
               class="rounded-full bg-slate-100 text-slate-700 hover:bg-slate-100"
-              >{ev.status}</Badge
+              >{catalogLabel(EVENT_STATUS_CATALOG, ev.status)}</Badge
             >
           </div>
 
           {#if isCareerRestricted(ev)}
             <Badge class="rounded-full bg-slate-700 text-white hover:bg-slate-700">
               Otra carrera{ev.owner_career_name ? ` · ${ev.owner_career_name}` : ""}
+            </Badge>
+          {/if}
+
+          {#if describeAfcEventHours(ev)}
+            <Badge class="rounded-full bg-amber-50 text-amber-800 hover:bg-amber-50">
+              {describeAfcEventHours(ev)}
             </Badge>
           {/if}
 
@@ -863,6 +885,12 @@
           Cargando datos del evento...
         </div>
       {:else}
+        {#if editHasAttendance}
+          <div class="mb-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            Este evento ya tiene asistencias registradas. No se pueden cambiar sus fechas, horas AFC ni eliminarlo.
+            Para corregir horas de un alumno usa el ajuste manual en Usuarios.
+          </div>
+        {/if}
         <div class="grid gap-4 py-2 sm:grid-cols-2">
           <div class="space-y-2 sm:col-span-2">
             <Label for="edit-event-title">Título *</Label>
@@ -994,12 +1022,12 @@
 
           <div class="space-y-2">
             <Label for="edit-event-start">Inicio *</Label>
-            <Input id="edit-event-start" name="starts_at" type="datetime-local" min={minimumEventDatetime} bind:value={editForm.startsAt} />
+            <Input id="edit-event-start" name="starts_at" type="datetime-local" min={minimumEventDatetime} bind:value={editForm.startsAt} disabled={editHasAttendance} />
           </div>
 
           <div class="space-y-2">
             <Label for="edit-event-end">Fin *</Label>
-            <Input id="edit-event-end" name="ends_at" type="datetime-local" min={editForm.startsAt || minimumEventDatetime} bind:value={editForm.endsAt} />
+            <Input id="edit-event-end" name="ends_at" type="datetime-local" min={editForm.startsAt || minimumEventDatetime} bind:value={editForm.endsAt} disabled={editHasAttendance} />
           </div>
 
           <div class="space-y-2 sm:col-span-2">
@@ -1016,20 +1044,19 @@
             </div>
           </div>
 
-          <div class="space-y-2">
-            <Label for="edit-event-hours">Horas acreditables</Label>
-            <input
-              id="edit-event-hours"
-              name="hours_value"
-              class="border-input bg-background flex h-10 w-full rounded-md border px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-              type="number"
-              min="0"
-              max={MAX_EVENT_HOURS}
-              step="0.01"
-              inputmode="decimal"
-              autocomplete="off"
-              value={editForm.hoursValue}
-              oninput={handleEditHoursInput}
+          <div class="space-y-3 sm:col-span-2 rounded-2xl border p-4">
+            <div class="text-sm font-semibold text-slate-700">Horas AFC</div>
+            <AfcHoursSection
+              bind:state={editAfcState}
+              catalog={$afcCatalog.types}
+              catalogStatus={$afcCatalog.status === "idle" ? "loading" : $afcCatalog.status}
+              catalogError={$afcCatalog.error}
+              idPrefix="edit-event-afc"
+              defaultDate={String(editForm.startsAt || "").slice(0, 10)}
+              eventId={selectedEventId}
+              legacyHours={editAfcEvent?.afc_valuation ? null : editAfcEvent?.hours_value ?? null}
+              error={editAfcError}
+              disabled={editHasAttendance}
             />
           </div>
 
@@ -1048,8 +1075,8 @@
               class="h-10 w-full rounded-md border px-3"
               bind:value={editForm.status}
             >
-              <option value="draft">Borrador</option>
-              <option value="published">Publicado</option>
+              <option value="draft" disabled={lockedStatusValues.includes("draft")}>Borrador</option>
+              <option value="published" disabled={lockedStatusValues.includes("published")}>Publicado</option>
               <option value="cancelled">Cancelado</option>
               <option value="ended">Finalizado</option>
             </select>
@@ -1132,18 +1159,26 @@
             </div>
           {/if}
 
+          <!--
+          Self check-in oculto: permitiría que el propio alumno registre su asistencia sin escaneo del staff.
+          Aún no existe ese flujo; solo se guardaba events.allow_self_checkin.
           <div
             class="sm:col-span-2 flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3"
           >
             <div class="text-sm font-semibold">Permitir self check-in</div>
             <Switch aria-label="Permitir self check-in" bind:checked={editForm.allowSelfCheckin} />
           </div>
+          -->
 
+          <!-- Geocerca deshabilitada temporalmente: con la ubicación activa el staff no podía registrar check-ins. -->
           <div
-            class="sm:col-span-2 flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3"
+            class="sm:col-span-2 flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3 opacity-60"
           >
-            <div class="text-sm font-semibold">Geocerca obligatoria</div>
-            <Switch aria-label="Geocerca obligatoria" bind:checked={editForm.geoEnforced} />
+            <div>
+              <div class="text-sm font-semibold">Geocerca obligatoria</div>
+              <div class="text-xs text-muted-foreground">Temporalmente deshabilitada.</div>
+            </div>
+            <Switch aria-label="Geocerca obligatoria" bind:checked={editForm.geoEnforced} disabled />
           </div>
 
           {#if editForm.geoEnforced}
@@ -1198,14 +1233,16 @@
     </div>
 
     <Dialog.Footer>
-      <Button
-        variant="outline"
-        class="mr-auto border-red-200 text-red-700 hover:bg-red-50"
-        onclick={openDeleteConfirm}
-        disabled={editSubmitting || editLoading || deleting}
-      >
-        Eliminar evento
-      </Button>
+      {#if !editHasAttendance}
+        <Button
+          variant="outline"
+          class="mr-auto border-red-200 text-red-700 hover:bg-red-50"
+          onclick={openDeleteConfirm}
+          disabled={editSubmitting || editLoading || deleting}
+        >
+          Eliminar evento
+        </Button>
+      {/if}
       <Button
         variant="outline"
         onclick={() => (editOpen = false)}

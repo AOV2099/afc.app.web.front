@@ -345,12 +345,21 @@
 							</div>
 							<div class="mt-1 text-sm text-muted-foreground">{alert.description}</div>
 							<div class="mt-2 text-xs text-muted-foreground">
-								Expira: {formatDate(alert.expires_at)} · Auto delete: {alert.auto_delete ? 'Sí' : 'No'}
+								Expira: {formatDate(alert.expires_at)} · Eliminación automática: {alert.auto_delete ? 'Sí' : 'No'}
 							</div>
-							<div class="mt-3 flex items-center gap-2">
-								<Button size="sm" variant="outline" onclick={() => openEdit(alert)}>Editar</Button>
-								<Button size="sm" variant="destructive" onclick={() => openDelete(alert)}>Eliminar</Button>
+							<div class="mt-1 text-xs text-muted-foreground">
+								Publicada por: <span class="font-medium text-slate-700">{alert.created_by_email || 'Sin registro'}</span>
 							</div>
+							{#if alert.can_manage}
+								<div class="mt-3 flex items-center gap-2">
+									<Button size="sm" variant="outline" onclick={() => openEdit(alert)}>Editar</Button>
+									<Button size="sm" variant="destructive" onclick={() => openDelete(alert)}>Eliminar</Button>
+								</div>
+							{:else}
+								<div class="mt-3 text-xs text-muted-foreground">
+									Solo la carrera que la publicó o el superadmin pueden modificarla.
+								</div>
+							{/if}
 						</div>
 					{/each}
 				</div>

@@ -1,5 +1,6 @@
 <script>
   import { onMount, tick } from "svelte";
+  import { dev } from "$app/environment";
   import { goto } from "$app/navigation";
   import { Button } from "$lib/components/ui/button";
   import { Card, CardContent } from "$lib/components/ui/card";
@@ -11,6 +12,11 @@
     getEventDashboard,
     getEventTimeline,
   } from "$lib/services/adminEventsApi";
+  import {
+    EVENT_REGISTRATION_MODE_CATALOG,
+    EVENT_STATUS_CATALOG,
+    catalogLabel,
+  } from "../../routes/store";
   import {
     ArrowLeft,
     RefreshCcw,
@@ -142,7 +148,7 @@
   let hasDashboardLoaded = false;
   let intervalId;
   let cooldownIntervalId;
-  const DEBUG_DASHBOARD_LOGS = true;
+  const DEBUG_DASHBOARD_LOGS = dev;
 
   function goBack() {
     goto("/admin/events");
@@ -196,16 +202,14 @@
     if (e?.status === 401)
       return e?.message || "Tu sesión expiró. Inicia sesión nuevamente.";
     if (e?.status === 403)
-      return e?.message || "No tienes permisos para ver este dashboard.";
+      return e?.message || "No tienes permisos para ver estas métricas.";
     if (e?.status === 404) return e?.message || "Evento no encontrado.";
     if (e?.status >= 500)
       return e?.message || "Error del servidor al cargar métricas.";
-    return e?.message || "No se pudo cargar el dashboard del evento.";
+    return e?.message || "No se pudo cargar el panel de métricas del evento.";
   }
 
   function normalizeDashboardResponse(payload) {
-    console.log("payload", payload);
-    
     if (
       payload?.event ||
       payload?.registration_stats ||
@@ -684,7 +688,7 @@
       rangeEnd,
     ].join("|");
 
-    if (signature === lastViewsDebugSignature) return;
+    if (!DEBUG_DASHBOARD_LOGS || signature === lastViewsDebugSignature) return;
     lastViewsDebugSignature = signature;
 
     console.groupCollapsed(`[AdminMetrics] Views debug (${reason})`);
@@ -938,9 +942,9 @@
       class="mt-3 flex flex-wrap items-center gap-2 text-sm text-muted-foreground"
     >
       <Badge class="rounded-full bg-slate-100 text-slate-700 hover:bg-slate-100"
-        >{dashboard.event.status || "unknown"}</Badge
+        >{catalogLabel(EVENT_STATUS_CATALOG, dashboard.event.status)}</Badge
       >
-      <span>Modo de registro: {dashboard.event.registration_mode || "N/A"}</span
+      <span>Modo de registro: {catalogLabel(EVENT_REGISTRATION_MODE_CATALOG, dashboard.event.registration_mode)}</span
       >
       <span>•</span>
       <span>{eventDateRange()}</span>
@@ -952,7 +956,7 @@
   {/if}
 
   {#if loading}
-    <div class="mt-4 text-sm text-muted-foreground">Cargando dashboard...</div>
+    <div class="mt-4 text-sm text-muted-foreground">Cargando métricas...</div>
   {:else if dashboard}
     <div class="mt-4 grid gap-4">
       <Card>

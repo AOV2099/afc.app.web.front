@@ -15,7 +15,9 @@
 		Bell,
 		Settings,
 		LogOut,
-		Menu
+		Menu,
+		ListChecks,
+		GraduationCap
 	} from 'lucide-svelte';
 
 	export let user = null;
@@ -28,6 +30,8 @@
 		{ key: 'alerts', label: 'Alertas', path: '/admin/alerts', icon: Bell },
 		{ key: 'Crear Evento', label: 'Crear Evento', path: '/admin/create-event', icon: CalendarPlus2 },
 		{ key: 'Usuarios', label: 'Usuarios', path: '/admin/users', icon: User },
+		{ key: 'afc-catalog', label: 'Catálogo AFC', path: '/admin/afc-catalog', icon: ListChecks },
+		{ key: 'careers', label: 'Carreras', path: '/admin/careers', icon: GraduationCap, globalOnly: true },
 		{ key: 'settings', label: 'Configuración', path: '/admin/settings', icon: Settings }
 	];
 
@@ -46,7 +50,9 @@
 		Number(user?.career_id ?? user?.careerId) === 1
 			? 'Administrador global'
 			: String(user?.career_name || user?.career?.name || '').trim() || 'Administrador';
-	$: activeItem = NAV.find((item) => isNavigationPathActive($page.url.pathname, item.path));
+	$: isGlobalAdmin = Number(user?.career_id ?? user?.careerId) === 1;
+	$: visibleNav = NAV.filter((item) => !item.globalOnly || isGlobalAdmin);
+	$: activeItem = visibleNav.find((item) => isNavigationPathActive($page.url.pathname, item.path));
 	$: pageTitle = activeItem?.label || title;
 
 	function getInitials(givenName, familyName, userEmail) {
@@ -122,7 +128,7 @@
 			</button>
 
 			<nav class="admin-desktop-nav" aria-label="Navegación de administración">
-				{#each NAV as item (item.key)}
+				{#each visibleNav as item (item.key)}
 					<div class="admin-nav-entry">
 						<button
 							type="button"
@@ -220,7 +226,7 @@
 		</button>
 
 		<nav class="admin-mobile-nav" aria-label="Navegación de administración">
-			{#each NAV as item (item.key)}
+			{#each visibleNav as item (item.key)}
 				<button
 					type="button"
 					class:admin-nav-button-active={isNavigationPathActive(

@@ -25,6 +25,15 @@
 	import { Switch } from '$lib/components/ui/switch';
 	import * as ToggleGroup from '$lib/components/ui/toggle-group';
 	import * as Dialog from '$lib/components/ui/dialog';
+	import AfcHoursSection from '$lib/components/AfcHoursSection.svelte';
+	import { afcCatalog, ensureAfcCatalog } from '$lib/stores/afcCatalog.js';
+	import {
+		buildAfcValuationPayload,
+		computeAfcPreview,
+		createAfcState,
+		formatAfcHours,
+		validateAfcForSave
+	} from '$lib/utils/afcHoursForm.js';
 
 	import {
 		ArrowLeft,
@@ -55,6 +64,7 @@
 	let showCreatedStaffPassword = false;
 	let bulkErrorsDialogOpen = false;
 	let bulkValidationErrors = [];
+	let afcState = createAfcState();
 	const MAX_EVENT_HOURS = 100;
 	const minimumEventDate = (() => {
 		const now = new Date();
@@ -69,7 +79,6 @@
 		time: '',
 		endDate: '',
 		endTime: '',
-		hoursValue: 2,
 		capacityEnabled: true,
 		cupo: 50,
 		location: '',
@@ -139,6 +148,7 @@
 		formError = '';
 		staffAssignmentMode = 'existing';
 		selectedStaffUserId = '';
+		afcState = createAfcState();
 		form = {
 			title: '',
 			category: 'general',
@@ -147,7 +157,6 @@
 			time: '',
 			endDate: '',
 			endTime: '',
-			hoursValue: 2,
 			capacityEnabled: true,
 			cupo: 50,
 			location: '',
@@ -450,21 +459,6 @@
 		return Number.isFinite(parsed) ? parsed : null;
 	}
 
-	function preventInvalidHoursKey(event) {
-		if (['e', 'E', '+', '-'].includes(event.key)) event.preventDefault();
-	}
-
-	function handleManualHoursInput(event) {
-		const hoursValue = parseHoursInput(event.currentTarget.value);
-		fieldErrors = {
-			...fieldErrors,
-			hoursValue:
-				hoursValue === null || hoursValue < 0 || hoursValue > MAX_EVENT_HOURS
-					? `Las horas acreditables deben ser un decimal entre 0 y ${MAX_EVENT_HOURS}.`
-					: undefined
-		};
-	}
-
 	function buildSingleSession(startsAt, endsAt, hoursValue) {
 		if (startsAt && endsAt) {
 			return [
@@ -484,7 +478,7 @@
 		const startsAt = toIsoFromDateTime(form.date, form.time);
 		const endsAt =
 			toIsoFromDateTime(form.endDate, form.endTime) ||
-			(startsAt ? addHoursToIso(startsAt, Number(form.hoursValue) || 2) : null);
+			(startsAt ? addHoursToIso(startsAt, 2) : null);
 		const cancelDeadline = toIsoFromDateTime(form.cancelDeadlineDate, form.cancelDeadlineTime);
 		const selectedExistingStaffId = normalizeStaffUserId(selectedStaffUserId);
 		const geo =
@@ -506,20 +500,21 @@
 			organizer: form.organizer?.trim() || null,
 			starts_at: startsAt,
 			ends_at: endsAt,
-			hours_value: form.hoursValue,
+			afc_valuation: buildAfcValuationPayload(afcState, { catalog: $afcCatalog.types, defaultDate: form.date }),
 			capacity_enabled: Boolean(form.capacityEnabled),
 			capacity: form.capacityEnabled ? (form.cupo === '' ? null : Number(form.cupo)) : null,
 			status: form.status,
 			registration_mode: form.registrationMode,
 			resubmission_policy: form.resubmissionPolicy,
-			allow_self_checkin: Boolean(form.allowSelfCheckin),
+			// Self check-in oculto por ahora (sin flujo de auto check-in); el backend usa false por defecto.
+			// allow_self_checkin: Boolean(form.allowSelfCheckin),
 			geo_enforced: Boolean(form.geoEnforced),
 			cancel_policy: resolveCancelPolicyForPayload(form.cancelPolicy),
 			cancel_deadline: getCancelPolicyMeta(form.cancelPolicy).requiresDeadline
 				? cancelDeadline
 				: cancelDeadline,
 			geo,
-			sessions: buildSingleSession(startsAt, endsAt, form.hoursValue),
+			sessions: buildSingleSession(startsAt, endsAt, null),
 			attributes: {
 				location: form.location?.trim() || null,
 				organizer: form.organizer?.trim() || null,
@@ -614,7 +609,7 @@
 			return 'La fecha/hora de fin debe ser mayor a la de inicio.';
 		}
 		const hoursValue = parseHoursInput(payload.hours_value);
-		if (hoursValue === null || hoursValue < 0 || hoursValue > MAX_EVENT_HOURS) {
+		if (!payload.afc_valuation && (hoursValue === null || hoursValue < 0 || hoursValue > MAX_EVENT_HOURS)) {
 			return `Las horas acreditables deben ser un decimal entre 0 y ${MAX_EVENT_HOURS}, sin letras.`;
 		}
 		if (payload.capacity_enabled) {
@@ -649,10 +644,12 @@
 			errors.endDate = 'No puede estar en el pasado';
 			errors.endTime = 'No puede estar en el pasado';
 		}
-		const hoursValue = parseHoursInput(form.hoursValue);
-		if (hoursValue === null || hoursValue < 0 || hoursValue > MAX_EVENT_HOURS) {
-			errors.hoursValue = `Ingresa un decimal entre 0 y ${MAX_EVENT_HOURS}`;
-		}
+		const afcValidation = validateAfcForSave(afcState, {
+			catalog: $afcCatalog.types,
+			status: form.status,
+			defaultDate: form.date
+		});
+		if (!afcValidation.ok) errors.afc = afcValidation.message;
 
 		if (getCancelPolicyMeta(form.cancelPolicy).requiresDeadline) {
 			if (!form.cancelDeadlineDate) errors.cancelDeadlineDate = 'Campo obligatorio';
@@ -677,7 +674,7 @@
 			fieldErrors: errors,
 			message:
 				Object.keys(errors).length > 0
-					? errors._payload || 'Completa los campos marcados en rojo.'
+					? errors._payload || errors.afc || 'Completa los campos marcados en rojo.'
 					: ''
 		};
 	}
@@ -702,12 +699,6 @@
 		if (field === 'endTime') {
 			if (!form.endTime) message = 'La hora de fin es obligatoria.';
 			else if (form.endDate && new Date(toIsoFromDateTime(form.endDate, form.endTime)).getTime() < Date.now()) message = 'La fecha y hora de fin no pueden estar en el pasado.';
-		}
-		if (field === 'hoursValue') {
-			const hoursValue = parseHoursInput(form.hoursValue);
-			if (hoursValue === null || hoursValue < 0 || hoursValue > MAX_EVENT_HOURS) {
-				message = `Las horas acreditables deben ser un decimal entre 0 y ${MAX_EVENT_HOURS}.`;
-			}
 		}
 		fieldErrors = { ...fieldErrors, [field]: message };
 	}
@@ -1105,11 +1096,19 @@
 
 	onMount(() => {
 		loadStaffUsers();
+		ensureAfcCatalog();
 	});
 
 	$: selectedCategoryMeta = getEventCategoryMeta(form.category);
 	$: selectedCategoryIcon = getEventCategoryIcon(selectedCategoryMeta.iconKey);
 	$: cancelPolicyMeta = getCancelPolicyMeta(form.cancelPolicy);
+	$: afcPreview = computeAfcPreview(afcState, { catalog: $afcCatalog.types, defaultDate: form.date });
+	$: if (
+		fieldErrors.afc &&
+		validateAfcForSave(afcState, { catalog: $afcCatalog.types, status: form.status, defaultDate: form.date }).ok
+	) {
+		fieldErrors = { ...fieldErrors, afc: undefined };
+	}
 </script>
 
 <div class="min-h-screen bg-light-blue-background">
@@ -1157,7 +1156,10 @@
 			>
 				<!-- Slide 1: Editar -->
 				<section class="w-full flex-none space-y-6 overflow-x-hidden">
-					<!-- CSV Import (opcional) -->
+					<!--
+					Carga masiva por CSV deshabilitada: la plantilla aún usa hours_value manual y no el catálogo AFC
+					(tipo/supuesto). Reactivar cuando se adapte; la lógica (onPickCsv, buildCsvEventPayload,
+					createEventsBulk) sigue en este archivo.
 					<Card class={`rounded-3xl border bg-card text-card-foreground ${cardShadow}`}>
 						<CardContent class="p-5">
 							<div class="flex items-start justify-between gap-4">
@@ -1250,6 +1252,7 @@
 							{/if}
 					</CardContent>
 					</Card>
+					-->
 
 					<!-- Manual form: solo si NO está en modo CSV -->
 					{#if !bulk.mode}
@@ -1296,6 +1299,21 @@
 										/>
 									</div>
 								</div>
+							</CardContent>
+						</Card>
+
+						<h2 class="text-[22px] font-extrabold tracking-tight text-foreground">Horas AFC</h2>
+						<Card class={`rounded-3xl border bg-card text-card-foreground ${cardShadow}`}>
+							<CardContent class="p-5">
+								<AfcHoursSection
+									bind:state={afcState}
+									catalog={$afcCatalog.types}
+									catalogStatus={$afcCatalog.status === 'idle' ? 'loading' : $afcCatalog.status}
+									catalogError={$afcCatalog.error}
+									idPrefix="create-event-afc"
+									defaultDate={form.date}
+									error={fieldErrors.afc || ''}
+								/>
 							</CardContent>
 						</Card>
 
@@ -1445,6 +1463,9 @@
 									{/if}
 								</div>
 
+								<!--
+								Self check-in oculto: permitiría que el propio alumno registre su asistencia (QR/geolocalización)
+								sin escaneo del staff. Aún no existe ese flujo; solo se guardaba events.allow_self_checkin.
 								<div class="mt-4 flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3">
 									<div class="flex items-center gap-3">
 										<div class="flex h-10 w-10 items-center justify-center rounded-2xl bg-blue-50">
@@ -1457,6 +1478,7 @@
 									</div>
 									<Switch aria-label="Permitir self check-in" bind:checked={form.allowSelfCheckin} />
 								</div>
+								-->
 
 								<div class="mt-4 flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3">
 									<div>
@@ -1466,12 +1488,7 @@
 									<Switch aria-label="Limitar cupo" bind:checked={form.capacityEnabled} />
 								</div>
 
-								<div class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
-									<div>
-										<Label for="create-event-hours" class={`text-sm font-semibold ${fieldErrors.hoursValue ? 'text-red-600' : 'text-blue-600'}`}>Horas acreditables</Label>
-										<input id="create-event-hours" name="hours_value" class="border-input bg-background mt-2 flex h-12 w-full rounded-2xl border px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50" type="number" min="0" max={MAX_EVENT_HOURS} step="0.01" inputmode="decimal" autocomplete="off" bind:value={form.hoursValue} oninput={handleManualHoursInput} onkeydown={preventInvalidHoursKey} onblur={() => validateManualField('hoursValue')} />
-										{#if fieldErrors.hoursValue}<div class="mt-1 text-xs text-red-600">{fieldErrors.hoursValue}</div>{/if}
-									</div>
+								<div class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
 									<div>
 										<Label for="create-event-status" class="text-sm font-semibold text-blue-600">Estatus</Label>
 										<select id="create-event-status" name="status" class="mt-2 h-12 w-full rounded-2xl border px-3" bind:value={form.status}>
@@ -1479,6 +1496,9 @@
 												<option value={status.value}>{status.label}</option>
 											{/each}
 										</select>
+										{#if afcPreview.status === 'incomplete'}
+											<div class="mt-1 text-xs text-amber-700">Sin horas AFC completas, el evento debe guardarse como borrador.</div>
+										{/if}
 									</div>
 									{#if form.capacityEnabled}
 										<div>
@@ -1509,9 +1529,13 @@
 									</div>
 								</div>
 
-								<div class="mt-4 flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3">
-									<div class="text-sm font-semibold">Geocerca obligatoria</div>
-									<Switch aria-label="Geocerca obligatoria" bind:checked={form.geoEnforced} />
+								<!-- Geocerca deshabilitada temporalmente: con la ubicación activa el staff no podía registrar check-ins. -->
+								<div class="mt-4 flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3 opacity-60">
+									<div>
+										<div class="text-sm font-semibold">Geocerca obligatoria</div>
+										<div class="text-xs text-muted-foreground">Temporalmente deshabilitada.</div>
+									</div>
+									<Switch aria-label="Geocerca obligatoria" bind:checked={form.geoEnforced} disabled />
 								</div>
 
 								{#if form.geoEnforced}
@@ -1660,9 +1684,11 @@
 																<span>{getPreviewCategoryMeta(ev.category).label}</span>
 															</span>
 														</Badge>
+												<!-- Self check-in oculto por ahora.
 												<Badge class={`rounded-full ${ev.allowSelfCheckin ? 'bg-blue-50 text-blue-700 hover:bg-blue-50' : 'bg-slate-100 text-slate-700 hover:bg-slate-100'}`}>
 													{ev.allowSelfCheckin ? 'Self check-in' : 'Sin self check-in'}
 												</Badge>
+												-->
 											</div>
 										</div>
 									{/each}
@@ -1746,6 +1772,7 @@
 									</div>
 								</div>
 
+								<!-- Self check-in oculto por ahora.
 								<div class="mt-3 flex items-center justify-between rounded-2xl bg-slate-50 p-3">
 									<div class="inline-flex items-center gap-2 text-sm font-semibold">
 										<QrCode class="h-4 w-4 text-blue-600" />
@@ -1760,6 +1787,23 @@
 									>
 										{form.allowSelfCheckin ? 'Activado' : 'Desactivado'}
 									</Badge>
+								</div>
+								-->
+
+								<div class="mt-3 rounded-2xl bg-slate-50 p-3">
+									<div class="text-xs text-muted-foreground">Horas AFC</div>
+									<div class="mt-1 text-sm font-semibold">
+										{afcPreview.type?.name || 'Sin tipo de actividad'}{afcPreview.scenario ? ` · ${afcPreview.scenario.label}` : ''}
+									</div>
+									<div class="mt-1 text-sm">
+										{#if afcPreview.status === 'calculated'}
+											Horas AFC asignadas: {formatAfcHours(afcPreview.valuation.final_hours)}
+										{:else if afcPreview.status === 'unselected'}
+											Pendiente de selección
+										{:else}
+											Horas pendientes de captura
+										{/if}
+									</div>
 								</div>
 
 								<div class="mt-3 rounded-2xl bg-slate-50 p-3">

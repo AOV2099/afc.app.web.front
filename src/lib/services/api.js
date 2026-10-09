@@ -48,7 +48,7 @@ async function apiFetch(path, options = {}) {
 	const data = await response.json().catch(() => null);
 
 	if (!response.ok) {
-		const message = data?.message || `Request failed (${response.status})`;
+		const message = data?.message || `La solicitud falló (${response.status}).`;
 		redirectToLoginIfUnauthorized(response.status, message);
 		const error = new Error(message);
 		error.status = response.status;
@@ -190,6 +190,66 @@ export const adminEventsApi = {
 		return apiFetch(`/api/admin/events/${encodeURIComponent(eventId)}`, {
 			method: 'DELETE'
 		});
+	}
+};
+
+export const adminCareersApi = {
+	list() {
+		return apiFetch('/api/admin/careers', { method: 'GET' });
+	},
+	create(payload) {
+		return apiFetch('/api/admin/careers', { method: 'POST', body: JSON.stringify(payload) });
+	},
+	update(careerId, payload) {
+		return apiFetch(`/api/admin/careers/${encodeURIComponent(careerId)}`, {
+			method: 'PUT',
+			body: JSON.stringify(payload)
+		});
+	}
+};
+
+export const afcCatalogApi = {
+	list({ includeInactive = false } = {}) {
+		return apiFetch(`/api/admin/afc-catalog${toQueryString({ include_inactive: includeInactive ? 1 : '' })}`, {
+			method: 'GET'
+		});
+	},
+	createType(payload) {
+		return apiFetch('/api/admin/afc-catalog/types', { method: 'POST', body: JSON.stringify(payload) });
+	},
+	updateType(typeId, payload) {
+		return apiFetch(`/api/admin/afc-catalog/types/${encodeURIComponent(typeId)}`, {
+			method: 'PUT',
+			body: JSON.stringify(payload)
+		});
+	},
+	createScenario(typeId, payload) {
+		return apiFetch(`/api/admin/afc-catalog/types/${encodeURIComponent(typeId)}/scenarios`, {
+			method: 'POST',
+			body: JSON.stringify(payload)
+		});
+	},
+	updateScenario(scenarioId, payload) {
+		return apiFetch(`/api/admin/afc-catalog/scenarios/${encodeURIComponent(scenarioId)}`, {
+			method: 'PUT',
+			body: JSON.stringify(payload)
+		});
+	}
+};
+
+export const filesApi = {
+	upload(file, { purpose, eventId = null } = {}) {
+		return apiFetch(`/api/files${toQueryString({ purpose, event_id: eventId })}`, {
+			method: 'POST',
+			headers: {
+				'Content-Type': file?.type || 'application/octet-stream',
+				'X-File-Name': encodeURIComponent(file?.name || '')
+			},
+			body: file
+		});
+	},
+	url(fileId) {
+		return `${API_BASE_URL}/api/files/${encodeURIComponent(fileId)}`;
 	}
 };
 

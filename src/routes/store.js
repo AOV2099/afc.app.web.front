@@ -32,6 +32,21 @@ export const EVENT_STATUS_CATALOG = {
 	ended: { value: "ended", label: "Finalizado" }
 };
 
+export const USER_ROLE_CATALOG = {
+	admin: { value: "admin", label: "Administrador" },
+	staff: { value: "staff", label: "Staff" },
+	student: { value: "student", label: "Estudiante" },
+	auditor: { value: "auditor", label: "Auditor" },
+	visitor: { value: "visitor", label: "Visitante" }
+};
+
+/** Etiqueta en español de un valor de catálogo; si no existe, se muestra el valor tal cual. */
+export function catalogLabel(catalog, value, fallback = "Sin dato") {
+	if (value === null || value === undefined || value === "") return fallback;
+	const key = String(value).trim().toLowerCase();
+	return catalog?.[key]?.label || String(value);
+}
+
 export const EVENT_REGISTRATION_MODE_CATALOG = {
 	auto: { value: "auto", label: "Automático" },
 	manual_review: { value: "manual_review", label: "Revisión manual" }

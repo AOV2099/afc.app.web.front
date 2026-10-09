@@ -7,6 +7,7 @@
 	import { Badge } from '$lib/components/ui/badge';
 	import { adminEventsApi, adminRequestsApi } from '$lib/services/api';
 	import { isFutureEvent, isPastEvent } from '$lib/utils/events.js';
+	import { EVENT_STATUS_CATALOG, catalogLabel } from '../../routes/store';
 
 	import { Bell, CalendarDays, CalendarPlus2, ClipboardList, Eye, QrCode } from 'lucide-svelte';
 
@@ -92,7 +93,7 @@
 					? `${startsAt.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })} - ${endsAt.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}`
 					: 'Sin horario',
 			availabilityLabel,
-			metaRightTop: e?.status || 'N/A',
+			metaRightTop: catalogLabel(EVENT_STATUS_CATALOG, e?.status),
 			metaRightBottom: 'Estado'
 		};
 	});
@@ -225,7 +226,7 @@
 	<!-- Top bar -->
 	<div class="mx-auto w-full max-w-screen-md px-4 pt-6 sm:px-6 lg:px-8">
 		<div class="relative flex items-center justify-between">
-			<h1 class="text-2xl font-semibold tracking-tight sm:text-2xl">Dashboard Admin</h1>
+			<h1 class="text-2xl font-semibold tracking-tight sm:text-2xl">Panel de administración</h1>
 
 			<Button
 				variant="ghost"
