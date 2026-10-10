@@ -1182,8 +1182,23 @@
 										<TableCell class="truncate">{u.email}</TableCell>
 										<TableCell class="font-mono text-sm">{u.student_id || '-'}</TableCell>
 										<TableCell class="font-semibold text-slate-700">{formatHours(u.hours_total)}</TableCell>
-										<TableCell>
-											<div class="max-w-48 text-sm font-medium">{userCareerName(u)}</div>
+										<TableCell class="max-w-48">
+											<Tooltip.Provider delayDuration={200}>
+												<Tooltip.Root>
+													<Tooltip.Trigger
+														class="block w-full max-w-48 cursor-default truncate text-left text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+														aria-label={`Carrera: ${userCareerName(u)}`}
+													>
+														{userCareerName(u)}
+													</Tooltip.Trigger>
+													<Tooltip.Content class="max-w-xs">
+														<div class="font-medium">{userCareerName(u)}</div>
+														{#if userCareerFaculty(u)}
+															<div class="text-xs opacity-80">{userCareerFaculty(u)}</div>
+														{/if}
+													</Tooltip.Content>
+												</Tooltip.Root>
+											</Tooltip.Provider>
 											{#if userCareerFaculty(u)}
 												<div class="max-w-48 truncate text-xs text-muted-foreground">
 													{userCareerFaculty(u)}
