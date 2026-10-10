@@ -39,6 +39,7 @@ function getCheckinReasonMessage(details = {}) {
 }
 
 function extractBackendMessage(data, status) {
+	if (data?.code === 'view_as_read_only' && data?.message) return data.message;
 	const fallback =
 		String(data?.message || '').trim() ||
 		getCheckinReasonMessage(data);

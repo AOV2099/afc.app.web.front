@@ -1,7 +1,7 @@
 <script>
 	import { onMount, onDestroy } from 'svelte';
 	import { toast } from 'svelte-sonner';
-	import { adminUsersApi, careersApi } from '$lib/services/api';
+	import { adminUsersApi, careersApi, viewAsApi } from '$lib/services/api';
 	import { EVENT_CATEGORY_OPTIONS } from '$lib/catalogs/eventCategories';
 	import {
 		STUDENT_CSV_MAX_ROWS,
@@ -184,6 +184,27 @@
 	function normalizePageSize(value) {
 		const parsed = Number(value);
 		return pageSizeOptions.includes(parsed) ? parsed : defaultPageSize;
+	}
+
+	let viewAsLoadingId = null;
+
+	function canViewAs(user) {
+		if (!isGlobalAdmin || !user || String(user.id) === String(currentUser?.id)) return false;
+		if (String(user.status || '').toLowerCase() !== 'active') return false;
+		const userCareerId = Number(user.career_id ?? user.career?.id);
+		return !(String(user.role || '').toLowerCase() === 'admin' && userCareerId === 1);
+	}
+
+	async function startViewAs(user) {
+		if (viewAsLoadingId) return;
+		viewAsLoadingId = user.id;
+		try {
+			const res = await viewAsApi.start(user.id);
+			window.location.assign(res?.home_path || '/app/home');
+		} catch (e) {
+			toast.error(e?.message || 'No se pudo abrir la vista del usuario.');
+			viewAsLoadingId = null;
+		}
 	}
 
 	function careerNameById(careerId, availableCareers = careers, user = currentUser) {
@@ -1180,6 +1201,23 @@
 										<TableCell class="pr-4 text-right">
 											<Tooltip.Provider delayDuration={150}>
 												<span class="inline-flex items-center">
+													{#if canViewAs(u)}
+														<Tooltip.Root>
+															<Tooltip.Trigger
+																class="inline-grid h-9 w-9 place-items-center rounded-full hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+																disabled={Boolean(viewAsLoadingId)}
+																onclick={() => startViewAs(u)}
+																aria-label="Ver como este usuario"
+															>
+																{#if viewAsLoadingId === u.id}
+																	<Loader2 class="h-4 w-4 animate-spin text-violet-600" />
+																{:else}
+																	<Eye class="h-4 w-4 text-violet-600" />
+																{/if}
+															</Tooltip.Trigger>
+															<Tooltip.Content>Ver como este usuario (solo lectura)</Tooltip.Content>
+														</Tooltip.Root>
+													{/if}
 													{#if isManualHoursEligibleUser(u)}
 														<Tooltip.Root>
 															<Tooltip.Trigger
@@ -1280,6 +1318,19 @@
 
 								<div class="flex items-center justify-end">
 									<Tooltip.Provider delayDuration={150}>
+										{#if canViewAs(u)}
+											<Tooltip.Root>
+												<Tooltip.Trigger
+													class="inline-grid h-9 w-9 place-items-center rounded-full hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+													disabled={Boolean(viewAsLoadingId)}
+													onclick={() => startViewAs(u)}
+													aria-label="Ver como este usuario"
+												>
+													<Eye class="h-4 w-4 text-violet-600" />
+												</Tooltip.Trigger>
+												<Tooltip.Content>Ver como este usuario (solo lectura)</Tooltip.Content>
+											</Tooltip.Root>
+										{/if}
 										{#if isManualHoursEligibleUser(u)}
 											<Tooltip.Root>
 												<Tooltip.Trigger

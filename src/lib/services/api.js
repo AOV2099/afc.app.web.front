@@ -71,6 +71,15 @@ function toQueryString(params = {}) {
 	return query ? `?${query}` : '';
 }
 
+export const viewAsApi = {
+	start(userId) {
+		return apiFetch(`/api/admin/users/${encodeURIComponent(userId)}/view-as`, { method: 'POST' });
+	},
+	exit() {
+		return apiFetch('/api/view-as/exit', { method: 'POST' });
+	}
+};
+
 export const authApi = {
 	login(payload) {
 		return apiFetch('/api/login', {
