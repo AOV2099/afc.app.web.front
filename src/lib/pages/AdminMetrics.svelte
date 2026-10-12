@@ -172,16 +172,16 @@
     startRefreshCooldown(10);
   }
 
-  function eventTitle() {
-    return dashboard?.event?.title || `Evento ${eventId || ""}`;
+  function eventTitle(source) {
+    return source?.event?.title || `Evento ${eventId || ""}`;
   }
 
-  function eventDateRange() {
-    const startsAt = dashboard?.event?.starts_at
-      ? new Date(dashboard.event.starts_at)
+  function eventDateRange(source) {
+    const startsAt = source?.event?.starts_at
+      ? new Date(source.event.starts_at)
       : null;
-    const endsAt = dashboard?.event?.ends_at
-      ? new Date(dashboard.event.ends_at)
+    const endsAt = source?.event?.ends_at
+      ? new Date(source.event.ends_at)
       : null;
 
     const startsLabel =
@@ -914,7 +914,7 @@
 <div class="mx-auto w-full max-w-screen-xl px-4 pb-16 pt-6 sm:px-6 lg:px-8">
   <div class="flex items-center justify-between gap-3">
     <h1 class="text-2xl font-semibold tracking-tight sm:text-3xl">
-      AdminMetrics · {eventTitle()}
+      Métricas · {eventTitle(dashboard)}
     </h1>
     <div class="flex items-center gap-2">
       <Button
@@ -947,7 +947,7 @@
       <span>Modo de registro: {catalogLabel(EVENT_REGISTRATION_MODE_CATALOG, dashboard.event.registration_mode)}</span
       >
       <span>•</span>
-      <span>{eventDateRange()}</span>
+      <span>{eventDateRange(dashboard)}</span>
     </div>
   {/if}
 

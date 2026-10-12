@@ -11,7 +11,8 @@
   } from "$lib/catalogs/eventCategories";
   import { getEventCategoryIcon } from "$lib/catalogs/eventCategoryIcons";
   import { getEventCategoryStyleClasses } from "$lib/stores/eventCategoryStyles";
-  import { isPastEvent } from "$lib/utils/events.js";
+  import { DEFAULT_EVENT_STATUS_FILTER, eventStatusesQueryValue, isPastEvent } from "$lib/utils/events.js";
+  import EventStatusMultiSelect from "$lib/components/EventStatusMultiSelect.svelte";
   import { Card, CardContent } from "$lib/components/ui/card";
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
@@ -64,7 +65,7 @@
     page: 1,
     pageSize: 12,
     q: "",
-    status: "",
+    statuses: [...DEFAULT_EVENT_STATUS_FILTER],
     category: "",
   };
 
@@ -407,7 +408,8 @@
     query.category = categoryFilter ? normalizeEventCategory(categoryFilter, "general") : "";
 
     try {
-      const res = await adminEventsApi.listEvents(query);
+      const { statuses, ...rest } = query;
+      const res = await adminEventsApi.listEvents({ ...rest, status: eventStatusesQueryValue(statuses) });
       events = Array.isArray(res?.events) ? res.events : [];
       pagination = res?.pagination || pagination;
       filters = { ...filters, ...query };
@@ -720,19 +722,7 @@
       {/each}
     </select>
     <div class="flex gap-2 sm:col-span-1">
-      <select
-        id="admin-events-status-filter"
-        name="status_filter"
-        aria-label="Filtrar por estatus"
-        class="h-11 w-full rounded-2xl border px-3"
-        bind:value={filters.status}
-      >
-        <option value="">Todos</option>
-        <option value="draft">Borrador</option>
-        <option value="published">Publicado</option>
-        <option value="cancelled">Cancelado</option>
-        <option value="ended">Finalizado</option>
-      </select>
+      <EventStatusMultiSelect id="admin-events-status-filter" bind:selected={filters.statuses} />
       <Button
         class="h-11 rounded-2xl bg-blue-600 text-white hover:bg-blue-700"
         onclick={search}

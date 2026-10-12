@@ -1,5 +1,17 @@
 export const EVENT_TIME_ZONE = 'America/Mexico_City';
 
+export const EVENT_STATUS_FILTER_OPTIONS = [
+	{ value: 'published', label: 'Publicado' },
+	{ value: 'draft', label: 'Borrador' },
+	{ value: 'ended', label: 'Finalizado' },
+	{ value: 'cancelled', label: 'Cancelado' }
+];
+export const DEFAULT_EVENT_STATUS_FILTER = ['published', 'draft'];
+
+export function eventStatusesQueryValue(statuses) {
+	return Array.isArray(statuses) ? statuses.join(',') : '';
+}
+
 function localDateKey(value, timeZone = EVENT_TIME_ZONE) {
 	const date = value instanceof Date ? value : new Date(value);
 	if (Number.isNaN(date.getTime())) return null;

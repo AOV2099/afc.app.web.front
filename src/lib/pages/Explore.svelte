@@ -11,11 +11,14 @@
   import { getEventCategoryMeta } from '$lib/catalogs/eventCategories';
   import { getEventCategoryIcon } from '$lib/catalogs/eventCategoryIcons';
   import {
+    DEFAULT_EVENT_STATUS_FILTER,
+    eventStatusesQueryValue,
     isFutureEvent,
     isPastEvent,
     isVisibleToUser
   } from '$lib/utils/events.js';
   import EventCard from "$lib/components/EventCard.svelte";
+  import EventStatusMultiSelect from "$lib/components/EventStatusMultiSelect.svelte";
 
   import { Search, SlidersHorizontal, Ticket, Download } from "lucide-svelte";
   import EventDetailSheet from "./EventDetailSheet.svelte";
@@ -33,7 +36,7 @@
     page: 1,
     pageSize: 20,
     q: '',
-    status: '',
+    statuses: [...DEFAULT_EVENT_STATUS_FILTER],
     starts_from: '',
     starts_to: ''
   };
@@ -323,8 +326,9 @@
     const now = Date.now();
 
     try {
+      const { statuses, ...adminQuery } = query;
       const res = adminMode
-        ? await adminEventsApi.listEvents(query)
+        ? await adminEventsApi.listEvents({ ...adminQuery, status: eventStatusesQueryValue(statuses) })
         : await publicEventsApi.listEvents({
             page: query.page,
             pageSize: query.pageSize,
@@ -668,13 +672,7 @@
 
   {#if adminMode}
     <div class="mt-4 grid gap-3 sm:grid-cols-4">
-      <select class="h-11 w-full rounded-2xl border px-3 text-sm" bind:value={filters.status}>
-        <option value="">Todos los estatus</option>
-        <option value="draft">Borrador</option>
-        <option value="published">Publicado</option>
-        <option value="cancelled">Cancelado</option>
-        <option value="ended">Finalizado</option>
-      </select>
+      <EventStatusMultiSelect id="admin-explore-status-filter" bind:selected={filters.statuses} />
       <Input type="date" class="h-11 rounded-2xl" bind:value={filters.starts_from} />
       <Input type="date" class="h-11 rounded-2xl" bind:value={filters.starts_to} />
       <Button class="h-11 rounded-2xl bg-blue-600 text-white hover:bg-blue-700" onclick={searchEvents} disabled={loadingEvents}>

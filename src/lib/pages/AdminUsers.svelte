@@ -163,6 +163,12 @@
 	let accessDisabledMessage = '';
 	let importDisabledMessage = '';
 	let canImportStudents = false;
+	let userAdminPermissions = null;
+	let passwordManagedRoles = [];
+
+	function canChangePassword(user) {
+		return passwordManagedRoles.includes(String(user?.role || '').toLowerCase());
+	}
 	let adminCareerScope = null;
 	let assignableRoleOptions = [];
 
@@ -237,9 +243,11 @@
 			: currentCareerId === null
 				? 'Tu sesión no incluye una carrera válida. Vuelve a iniciar sesión para administrar usuarios.'
 				: '';
+	$: userAdminPermissions = currentUser?.user_admin ?? null;
 	$: importDisabledMessage = accessDisabledMessage;
-	$: canImportStudents = !importDisabledMessage;
-	$: assignableRoleOptions = getAssignableAdminUserRoles(currentUser);
+	$: canImportStudents = !importDisabledMessage && userAdminPermissions?.can_import_students !== false;
+	$: assignableRoleOptions = userAdminPermissions?.creatable_roles ?? getAssignableAdminUserRoles(currentUser);
+	$: passwordManagedRoles = userAdminPermissions?.password_roles ?? ['visitor', 'staff'];
 	$: if (isScopedAdmin && currentCareerId !== null && careerFilter !== String(currentCareerId)) {
 		careerFilter = String(currentCareerId);
 	}
@@ -348,7 +356,7 @@
 			studentId: '',
 			careerId: isScopedAdmin ? String(currentCareerId) : '',
 			status: 'active',
-			role: 'student'
+			role: assignableRoleOptions.includes('student') ? 'student' : assignableRoleOptions[0] || 'staff'
 		};
 	}
 
@@ -491,7 +499,7 @@
 			toast.success(
 				`Se agregaron ${Number(response.total_hours || 0).toLocaleString('es-MX', { maximumFractionDigits: 2 })} horas en ${Number(response.adjusted || 0)} ajustes.` +
 					(Number(response.capped_rows || 0) > 0
-						? ` ${Number(response.capped_rows)} se limitaron por la meta AFC de la carrera.`
+						? ` ${Number(response.capped_rows)} ajuste(s) se limitaron porque ya se alcanzó la meta de horas AFC.`
 						: '')
 			);
 			hoursImportOpen = false;
@@ -865,12 +873,12 @@
 			const requested = Number(res?.adjustment?.hours_requested ?? added);
 			const totalHours = Number(res?.adjustment?.total_hours ?? 0);
 			hoursOpen = false;
-			toast.success(
-				`${added.toLocaleString('es-MX', { maximumFractionDigits: 2 })} horas agregadas. Total: ${totalHours.toLocaleString('es-MX', { maximumFractionDigits: 2 })} horas.` +
-					(added < requested
-						? ` Se limitó por la meta AFC de ${res?.adjustment?.hours_goal} horas de su carrera.`
-						: '')
-			);
+			const formatNumber = (value) => value.toLocaleString('es-MX', { maximumFractionDigits: 2 });
+			if (added <= 0 && requested > 0) {
+				toast.info(`Ya se alcanzó la meta de horas AFC; no se agregaron horas. Total: ${formatNumber(totalHours)} horas.`);
+			} else {
+				toast.success(`Se han acreditado ${formatNumber(added)} h. Total: ${formatNumber(totalHours)} horas.`);
+			}
 			hoursUser = null;
 			hoursForm = { hours: '', category: '', motive: '', requestId: '' };
 		} catch (e) {
@@ -979,18 +987,19 @@
 						<Clock3 class="h-4 w-4" />
 						Cargar horas
 					</Button>
-					<span title={importDisabledMessage || 'Importar estudiantes desde un archivo CSV'}>
-						<Button
-							variant="outline"
-							class="h-11 rounded-2xl px-4 shadow-sm"
-							onclick={openStudentImport}
-							disabled={!canImportStudents || importPreviewLoading || importCommitLoading}
-							aria-describedby={importDisabledMessage ? 'student-import-disabled-message' : undefined}
-						>
-							<Upload class="h-4 w-4" />
-							Importar estudiantes
-						</Button>
-					</span>
+					{#if canImportStudents}
+						<span title="Importar estudiantes desde un archivo CSV">
+							<Button
+								variant="outline"
+								class="h-11 rounded-2xl px-4 shadow-sm"
+								onclick={openStudentImport}
+								disabled={importPreviewLoading || importCommitLoading}
+							>
+								<Upload class="h-4 w-4" />
+								Importar estudiantes
+							</Button>
+						</span>
+					{/if}
 					<Button
 						class="h-11 rounded-2xl bg-blue-600 px-4 text-white shadow-sm hover:bg-blue-700"
 						onclick={openCreateUser}
@@ -1247,17 +1256,19 @@
 															<Tooltip.Content>Agregar horas</Tooltip.Content>
 														</Tooltip.Root>
 													{/if}
-													<Tooltip.Root>
-														<Tooltip.Trigger
-															class="inline-grid h-9 w-9 place-items-center rounded-full hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
-															disabled={!hasCareerAdminAccess}
-															onclick={() => openPasswordUser(u)}
-															aria-label="Cambiar contraseña"
-														>
-															<KeyRound class="h-4 w-4 text-amber-600" />
-														</Tooltip.Trigger>
-														<Tooltip.Content>Cambiar contraseña</Tooltip.Content>
-													</Tooltip.Root>
+													{#if canChangePassword(u)}
+														<Tooltip.Root>
+															<Tooltip.Trigger
+																class="inline-grid h-9 w-9 place-items-center rounded-full hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+																disabled={!hasCareerAdminAccess}
+																onclick={() => openPasswordUser(u)}
+																aria-label="Cambiar contraseña"
+															>
+																<KeyRound class="h-4 w-4 text-amber-600" />
+															</Tooltip.Trigger>
+															<Tooltip.Content>Cambiar contraseña</Tooltip.Content>
+														</Tooltip.Root>
+													{/if}
 													<Tooltip.Root>
 														<Tooltip.Trigger
 															class="inline-grid h-9 w-9 place-items-center rounded-full hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
@@ -1360,17 +1371,19 @@
 												<Tooltip.Content>Agregar horas</Tooltip.Content>
 											</Tooltip.Root>
 										{/if}
-										<Tooltip.Root>
-											<Tooltip.Trigger
-												class="inline-grid h-9 w-9 place-items-center rounded-full hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
-												disabled={!hasCareerAdminAccess}
-												onclick={() => openPasswordUser(u)}
-												aria-label="Cambiar contraseña"
-											>
-												<KeyRound class="h-4 w-4 text-amber-600" />
-											</Tooltip.Trigger>
-											<Tooltip.Content>Cambiar contraseña</Tooltip.Content>
-										</Tooltip.Root>
+										{#if canChangePassword(u)}
+											<Tooltip.Root>
+												<Tooltip.Trigger
+													class="inline-grid h-9 w-9 place-items-center rounded-full hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+													disabled={!hasCareerAdminAccess}
+													onclick={() => openPasswordUser(u)}
+													aria-label="Cambiar contraseña"
+												>
+													<KeyRound class="h-4 w-4 text-amber-600" />
+												</Tooltip.Trigger>
+												<Tooltip.Content>Cambiar contraseña</Tooltip.Content>
+											</Tooltip.Root>
+										{/if}
 										<Tooltip.Root>
 											<Tooltip.Trigger
 												class="inline-grid h-9 w-9 place-items-center rounded-full hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
