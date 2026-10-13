@@ -86,6 +86,7 @@
 	let q = '';
 	let roleFilter = 'all';
 	let statusFilter = 'all';
+	let studySystemFilter = 'all';
 	let careerFilter = 'all';
 	let filtersReady = false;
 	let filtersTimeout;
@@ -183,6 +184,7 @@
 		{ field: 'account', label: 'Matrícula', className: '' },
 		{ field: 'hours', label: 'Total de horas', className: '' },
 		{ field: 'career', label: 'Carrera', className: '' },
+		{ field: 'system', label: 'Sistema', className: '' },
 		{ field: 'status', label: 'Estatus', className: '' },
 		{ field: 'role', label: 'Rol', className: '' }
 	];
@@ -264,7 +266,8 @@
 		studentId: '',
 		careerId: '',
 		status: 'active',
-		role: 'student'
+		role: 'student',
+		studySystem: 'esc'
 	};
 
 	let editForm = {
@@ -274,8 +277,19 @@
 		studentId: '',
 		careerId: '',
 		status: 'active',
-		role: 'student'
+		role: 'student',
+		studySystem: ''
 	};
+
+	const STUDY_SYSTEM_LABELS = {
+		esc: 'Escolarizado (ESC)',
+		sua: 'Abierta y a distancia (SUA)'
+	};
+
+	// La División de Universidad Abierta también lista alumnos SUA de otras carreras, pero solo para consulta.
+	function canManageRow(user) {
+		return isGlobalAdmin || positiveCareerId(user?.career_id ?? user?.career?.id) === currentCareerId;
+	}
 
 	function badgeClass(role) {
 		if (role === 'admin') return 'rounded-full bg-blue-50 text-blue-700 hover:bg-blue-50';
@@ -356,7 +370,8 @@
 			studentId: '',
 			careerId: isScopedAdmin ? String(currentCareerId) : '',
 			status: 'active',
-			role: assignableRoleOptions.includes('student') ? 'student' : assignableRoleOptions[0] || 'staff'
+			role: assignableRoleOptions.includes('student') ? 'student' : assignableRoleOptions[0] || 'staff',
+			studySystem: 'esc'
 		};
 	}
 
@@ -370,7 +385,7 @@
 	}
 
 	function openEditUser(user) {
-		if (!hasCareerAdminAccess) return;
+		if (!hasCareerAdminAccess || !canManageRow(user)) return;
 		selectedUser = user;
 		formError = '';
 		editForm = {
@@ -380,7 +395,8 @@
 			studentId: user.student_id || '',
 			careerId: resolveUserCareerId(user),
 			status: user.status || 'active',
-			role: normalizeRoleInput(user.role, user.role || 'student')
+			role: normalizeRoleInput(user.role, user.role || 'student'),
+			studySystem: user.study_system || ''
 		};
 		editOpen = true;
 	}
@@ -390,7 +406,7 @@
 	}
 
 	function openPasswordUser(user) {
-		if (!hasCareerAdminAccess) return;
+		if (!hasCareerAdminAccess || !canManageRow(user)) return;
 		passwordUser = user;
 		passwordError = '';
 		passwordForm = { newPassword: '', confirmPassword: '' };
@@ -400,7 +416,7 @@
 	}
 
 	function openManualHours(user) {
-		if (!hasCareerAdminAccess || !isManualHoursEligibleUser(user)) return;
+		if (!hasCareerAdminAccess || !canManageRow(user) || !isManualHoursEligibleUser(user)) return;
 		hoursUser = user;
 		hoursError = '';
 		hoursForm = {
@@ -730,6 +746,7 @@
 				q: q.trim() || undefined,
 				status: statusFilter === 'all' ? undefined : statusFilter,
 				role: roleFilter === 'all' ? undefined : roleFilter,
+				study_system: studySystemFilter === 'all' ? undefined : studySystemFilter,
 				career_id: careerFilter === 'all' ? undefined : careerFilter,
 				sortBy: sortBy || undefined,
 				sortDirection: sortBy ? sortDirection : undefined
@@ -956,7 +973,7 @@
 		clearTimeout(filtersTimeout);
 	});
 
-	$: filtersKey = `${q}\u0000${roleFilter}\u0000${statusFilter}\u0000${careerFilter}`;
+	$: filtersKey = `${q}\u0000${roleFilter}\u0000${statusFilter}\u0000${studySystemFilter}\u0000${careerFilter}`;
 
 	$: if (filtersReady && filtersKey !== loadedFiltersKey) {
 		loadedFiltersKey = filtersKey;
@@ -1022,9 +1039,15 @@
 				</p>
 			{/if}
 
+			{#if userAdminPermissions?.views_sua_students}
+				<p class="mt-3 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2 text-sm text-violet-800">
+					Además de tu área, ves a los alumnos SUA de todas las carreras (solo consulta).
+				</p>
+			{/if}
+
 			<div class="mt-4 space-y-3">
 				<div
-					class="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3 lg:grid-cols-[minmax(12rem,1fr)_minmax(8rem,auto)_minmax(9rem,auto)_minmax(9rem,auto)_minmax(8.5rem,auto)]"
+					class="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3 lg:grid-cols-[minmax(12rem,1fr)_minmax(8rem,auto)_minmax(9rem,auto)_minmax(9rem,auto)_minmax(9rem,auto)_minmax(8.5rem,auto)]"
 				>
 					<div class="relative sm:col-span-2 lg:col-span-1">
 						<Search class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -1070,6 +1093,16 @@
 						{#each statusOptions as status}
 							<option value={status}>{formatStatus(status)}</option>
 						{/each}
+					</select>
+
+					<select
+						class="h-11 w-full rounded-2xl border px-3 text-sm"
+						aria-label="Filtrar por sistema"
+						bind:value={studySystemFilter}
+					>
+						<option value="all">Todos los sistemas</option>
+						<option value="esc">Escolarizado (ESC)</option>
+						<option value="sua">Abierta y a distancia (SUA)</option>
 					</select>
 
 					<div class="sm:col-span-2 lg:col-span-1">
@@ -1161,13 +1194,13 @@
 						<TableBody>
 							{#if loading}
 								<TableRow>
-									<TableCell colspan="8" class="py-12 text-center text-sm text-muted-foreground">
+									<TableCell colspan="9" class="py-12 text-center text-sm text-muted-foreground">
 										<Loader2 class="mx-auto h-4 w-4 animate-spin" />
 									</TableCell>
 								</TableRow>
 							{:else if users.length === 0}
 								<TableRow>
-									<TableCell colspan="8" class="py-12 text-center text-sm text-muted-foreground">
+									<TableCell colspan="9" class="py-12 text-center text-sm text-muted-foreground">
 										No se encontraron usuarios.
 									</TableCell>
 								</TableRow>
@@ -1215,6 +1248,18 @@
 											{/if}
 										</TableCell>
 										<TableCell>
+											{#if u.study_system}
+												<Badge
+													class={`rounded-full uppercase ${u.study_system === 'sua' ? 'bg-violet-50 text-violet-700 hover:bg-violet-50' : 'bg-slate-100 text-slate-700 hover:bg-slate-100'}`}
+													title={STUDY_SYSTEM_LABELS[u.study_system]}
+												>
+													{u.study_system}
+												</Badge>
+											{:else}
+												<span class="text-sm text-muted-foreground">-</span>
+											{/if}
+										</TableCell>
+										<TableCell>
 											<Badge class={statusBadgeClass(u.status)}>{formatStatus(u.status)}</Badge>
 										</TableCell>
 
@@ -1242,7 +1287,7 @@
 															<Tooltip.Content>Ver como este usuario (solo lectura)</Tooltip.Content>
 														</Tooltip.Root>
 													{/if}
-													{#if isManualHoursEligibleUser(u)}
+													{#if canManageRow(u) && isManualHoursEligibleUser(u)}
 														<Tooltip.Root>
 															<Tooltip.Trigger
 																class="inline-grid h-9 w-9 place-items-center rounded-full hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
@@ -1256,7 +1301,7 @@
 															<Tooltip.Content>Agregar horas</Tooltip.Content>
 														</Tooltip.Root>
 													{/if}
-													{#if canChangePassword(u)}
+													{#if canManageRow(u) && canChangePassword(u)}
 														<Tooltip.Root>
 															<Tooltip.Trigger
 																class="inline-grid h-9 w-9 place-items-center rounded-full hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
@@ -1269,6 +1314,7 @@
 															<Tooltip.Content>Cambiar contraseña</Tooltip.Content>
 														</Tooltip.Root>
 													{/if}
+													{#if canManageRow(u)}
 													<Tooltip.Root>
 														<Tooltip.Trigger
 															class="inline-grid h-9 w-9 place-items-center rounded-full hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
@@ -1280,6 +1326,9 @@
 														</Tooltip.Trigger>
 														<Tooltip.Content>Editar usuario</Tooltip.Content>
 													</Tooltip.Root>
+													{:else}
+														<span class="text-xs text-muted-foreground">Solo consulta</span>
+													{/if}
 												</span>
 											</Tooltip.Provider>
 										</TableCell>
@@ -1330,6 +1379,9 @@
 											<div class="truncate text-xs text-muted-foreground">{u.email}</div>
 											<div class="mt-1 text-xs text-muted-foreground">
 												<span class="font-medium text-slate-600">Carrera:</span> {userCareerName(u)}
+												{#if u.study_system}
+													<span class="ml-1 rounded-full bg-slate-100 px-1.5 py-0.5 text-[10px] font-semibold uppercase">{u.study_system}</span>
+												{/if}
 											</div>
 											{#if userCareerFaculty(u)}
 												<div class="truncate text-xs text-muted-foreground">{userCareerFaculty(u)}</div>
@@ -1357,7 +1409,7 @@
 												<Tooltip.Content>Ver como este usuario (solo lectura)</Tooltip.Content>
 											</Tooltip.Root>
 										{/if}
-										{#if isManualHoursEligibleUser(u)}
+										{#if canManageRow(u) && isManualHoursEligibleUser(u)}
 											<Tooltip.Root>
 												<Tooltip.Trigger
 													class="inline-grid h-9 w-9 place-items-center rounded-full hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
@@ -1371,7 +1423,7 @@
 												<Tooltip.Content>Agregar horas</Tooltip.Content>
 											</Tooltip.Root>
 										{/if}
-										{#if canChangePassword(u)}
+										{#if canManageRow(u) && canChangePassword(u)}
 											<Tooltip.Root>
 												<Tooltip.Trigger
 													class="inline-grid h-9 w-9 place-items-center rounded-full hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
@@ -1384,6 +1436,7 @@
 												<Tooltip.Content>Cambiar contraseña</Tooltip.Content>
 											</Tooltip.Root>
 										{/if}
+										{#if canManageRow(u)}
 										<Tooltip.Root>
 											<Tooltip.Trigger
 												class="inline-grid h-9 w-9 place-items-center rounded-full hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
@@ -1395,6 +1448,9 @@
 											</Tooltip.Trigger>
 											<Tooltip.Content>Editar usuario</Tooltip.Content>
 										</Tooltip.Root>
+										{:else}
+											<span class="text-xs text-muted-foreground">Solo consulta</span>
+										{/if}
 									</Tooltip.Provider>
 								</div>
 							</CardContent>
@@ -1581,7 +1637,7 @@
 					class="block w-full rounded-xl border border-slate-200 bg-white text-sm text-slate-700 file:mr-4 file:border-0 file:bg-slate-100 file:px-4 file:py-3 file:font-medium file:text-slate-700 hover:file:bg-slate-200"
 				/>
 				<p id="student-import-file-help" class="text-xs text-muted-foreground">
-					Máximo 2 MB y {STUDENT_CSV_MAX_ROWS} filas. El servidor comprobará el formato y todos los datos.
+					Columnas: nombres, apellidos, correo, numero_cuenta, sistema (ESC o SUA). Máximo 2 MB y {STUDENT_CSV_MAX_ROWS} filas. El servidor comprobará el formato y todos los datos.
 				</p>
 				{#if importFile}
 					<p class="rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-800" aria-live="polite">
@@ -1888,6 +1944,16 @@
 					{/each}
 				</select>
 			</div>
+
+			{#if createForm.role === 'student'}
+				<div class="space-y-2 sm:col-span-2">
+					<Label for="create-user-study-system">Sistema *</Label>
+					<select id="create-user-study-system" class="h-10 w-full rounded-md border px-3" bind:value={createForm.studySystem}>
+						<option value="esc">{STUDY_SYSTEM_LABELS.esc}</option>
+						<option value="sua">{STUDY_SYSTEM_LABELS.sua}</option>
+					</select>
+				</div>
+			{/if}
 		</div>
 
 		{#if formError}
@@ -1973,6 +2039,17 @@
 					{/each}
 				</select>
 			</div>
+
+			{#if editForm.role === 'student'}
+				<div class="space-y-2 sm:col-span-2">
+					<Label for="edit-user-study-system">Sistema</Label>
+					<select id="edit-user-study-system" class="h-10 w-full rounded-md border px-3" bind:value={editForm.studySystem}>
+						<option value="">Sin dato</option>
+						<option value="esc">{STUDY_SYSTEM_LABELS.esc}</option>
+						<option value="sua">{STUDY_SYSTEM_LABELS.sua}</option>
+					</select>
+				</div>
+			{/if}
 		</div>
 
 		{#if formError}

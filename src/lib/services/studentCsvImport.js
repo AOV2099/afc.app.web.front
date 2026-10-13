@@ -1,7 +1,7 @@
 export const STUDENT_CSV_MAX_BYTES = 2 * 1024 * 1024;
 export const STUDENT_CSV_MAX_ROWS = 1000;
 export const STUDENT_CSV_TEMPLATE_FILENAME = 'plantilla-estudiantes-afc.csv';
-export const STUDENT_CSV_TEMPLATE = '\uFEFFnombres,apellidos,correo,numero_cuenta\n';
+export const STUDENT_CSV_TEMPLATE = '\uFEFFnombres,apellidos,correo,numero_cuenta,sistema\n';
 
 export function validateStudentCsvFile(file) {
 	if (!file) return 'Selecciona un archivo CSV.';

@@ -30,6 +30,7 @@ export function normalizeAdminStudentId(value) {
 }
 
 export function isManualHoursEligibleUser(user) {
+	if (String(user?.role || '').toLowerCase() === 'staff') return false;
 	return /^\d{8,10}$/u.test(String(user?.student_id || '').trim());
 }
 
@@ -53,7 +54,8 @@ export function buildAdminUserCreatePayload(form, { isGlobalAdmin, currentCareer
 		studentId: normalizeAdminStudentId(form?.studentId).trim() || undefined,
 		career_id: isGlobalAdmin ? (selectedCareerId ?? undefined) : (scopedCareerId ?? undefined),
 		status: form?.status,
-		role: form?.role
+		role: form?.role,
+		study_system: form?.role === 'student' ? form?.studySystem || 'esc' : undefined
 	};
 }
 
@@ -80,6 +82,9 @@ export function buildAdminUserEditPayload({ form, selectedUser, isGlobalAdmin })
 	}
 	if (form?.status !== (selectedUser.status || 'active')) payload.status = form.status;
 	if (form?.role !== (selectedUser.role || 'student')) payload.role = form.role;
+	if (form?.role === 'student' && (form?.studySystem || '') !== (selectedUser.study_system || '')) {
+		payload.study_system = form.studySystem || null;
+	}
 
 	return payload;
 }
