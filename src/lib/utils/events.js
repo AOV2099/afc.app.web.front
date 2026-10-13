@@ -8,6 +8,9 @@ export const EVENT_STATUS_FILTER_OPTIONS = [
 ];
 export const DEFAULT_EVENT_STATUS_FILTER = ['published', 'draft'];
 
+// Debe coincidir con la clase aspect-[2/1] de EventCard y de las vistas previas.
+export const EVENT_COVER_HINT = 'Relación de aspecto 2:1 · tamaño sugerido 1200 × 600 px (JPG, PNG o WebP).';
+
 export function eventStatusesQueryValue(statuses) {
 	return Array.isArray(statuses) ? statuses.join(',') : '';
 }

@@ -13,7 +13,7 @@
   const variantClasses = {
     featured: {
       card: "w-[280px] sm:w-[340px] lg:w-[380px]",
-      image: "h-36 sm:h-44",
+      image: "aspect-[2/1]",
       content: "space-y-1.5 p-4 sm:p-5",
       title: "text-base sm:text-lg",
       meta: "space-y-1",
@@ -21,7 +21,7 @@
     },
     upcoming: {
       card: "w-full",
-      image: "h-44 sm:h-48",
+      image: "aspect-[2/1]",
       content: "space-y-2 p-4 sm:p-5",
       title: "text-lg",
       meta: "space-y-1",

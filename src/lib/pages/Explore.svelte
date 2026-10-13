@@ -339,7 +339,7 @@
           const mapped = await enrichWithRegistrationsCount(events.map(mapAdminEventToUi));
           const visible = adminMode ? mapped : mapped.filter((item) => isVisibleToUser(item, now));
 
-          upcoming = visible.filter((item) => isFutureEvent(item, now));
+          upcoming = adminMode ? visible : visible.filter((item) => isFutureEvent(item, now));
           featured = visible.slice(0, 5);
       pagination = res?.pagination || pagination;
       filters = { ...filters, ...query };
@@ -714,15 +714,15 @@
 
   <!-- Próximos eventos -->
   <div class="mt-6">
-    <h2 class="text-lg font-semibold sm:text-xl">Próximos Eventos</h2>
+    <h2 class="text-lg font-semibold sm:text-xl">{adminMode ? 'Eventos' : 'Próximos Eventos'}</h2>
   </div>
 
   <!-- Grid responsivo -->
   {#if loadingEvents}
-    <div class="mt-3 text-sm text-muted-foreground">Cargando próximos eventos...</div>
+    <div class="mt-3 text-sm text-muted-foreground">Cargando eventos...</div>
   {:else if !upcoming.length}
     <div class="mt-3 rounded-xl border border-dashed bg-background/60 px-4 py-6 text-center text-sm text-muted-foreground">
-      No hay próximos eventos disponibles.
+      {adminMode ? 'No hay eventos con los filtros seleccionados.' : 'No hay próximos eventos disponibles.'}
     </div>
   {:else}
     <div class="mt-3 grid gap-4 md:grid-cols-2 xl:grid-cols-3">

@@ -513,10 +513,7 @@
 			const response = await adminUsersApi.commitHoursCsv(hoursImportId);
 			if (!response?.ok) throw new Error(response?.message || 'No se pudo completar la carga.');
 			toast.success(
-				`Se agregaron ${Number(response.total_hours || 0).toLocaleString('es-MX', { maximumFractionDigits: 2 })} horas en ${Number(response.adjusted || 0)} ajustes.` +
-					(Number(response.capped_rows || 0) > 0
-						? ` ${Number(response.capped_rows)} ajuste(s) se limitaron porque ya se alcanzó la meta de horas AFC.`
-						: '')
+				`Se han agregado ${Number(response.total_hours || 0).toLocaleString('es-MX', { maximumFractionDigits: 2 })} hrs en ${Number(response.adjusted || 0)} ajustes.`
 			);
 			hoursImportOpen = false;
 			resetHoursImport();
@@ -891,11 +888,9 @@
 			const totalHours = Number(res?.adjustment?.total_hours ?? 0);
 			hoursOpen = false;
 			const formatNumber = (value) => value.toLocaleString('es-MX', { maximumFractionDigits: 2 });
-			if (added <= 0 && requested > 0) {
-				toast.info(`Ya se alcanzó la meta de horas AFC; no se agregaron horas. Total: ${formatNumber(totalHours)} horas.`);
-			} else {
-				toast.success(`Se han acreditado ${formatNumber(added)} h. Total: ${formatNumber(totalHours)} horas.`);
-			}
+			const message = `Se han agregado ${formatNumber(added)} hrs. Total: ${formatNumber(totalHours)} hrs.`;
+			if (added < requested) toast.info(message);
+			else toast.success(message);
 			hoursUser = null;
 			hoursForm = { hours: '', category: '', motive: '', requestId: '' };
 		} catch (e) {

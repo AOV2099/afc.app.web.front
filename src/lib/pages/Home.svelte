@@ -589,7 +589,7 @@
 						data-past={r.isPast ? 'true' : undefined}
 					>
 						<div
-							class="relative h-32 w-full bg-muted"
+							class="relative aspect-[2/1] w-full bg-muted"
 							style={`background-image:url('${r.img}');background-size:cover;background-position:center;`}
 						>
 							<div class="absolute top-3 left-3">

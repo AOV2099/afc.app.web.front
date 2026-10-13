@@ -3,7 +3,13 @@
   import { goto } from "$app/navigation";
   import { toast } from "svelte-sonner";
   import { adminEventsApi, adminStaffUsersApi } from "$lib/services/api";
-  import { EVENT_STATUS_CATALOG, catalogLabel } from "../../routes/store";
+  import {
+    EVENT_CANCEL_POLICY_CATALOG,
+    EVENT_REGISTRATION_MODE_CATALOG,
+    EVENT_RESUBMISSION_POLICY_CATALOG,
+    EVENT_STATUS_CATALOG,
+    catalogLabel,
+  } from "../../routes/store";
   import {
     EVENT_CATEGORY_OPTIONS,
     getEventCategoryMeta,
@@ -11,7 +17,7 @@
   } from "$lib/catalogs/eventCategories";
   import { getEventCategoryIcon } from "$lib/catalogs/eventCategoryIcons";
   import { getEventCategoryStyleClasses } from "$lib/stores/eventCategoryStyles";
-  import { DEFAULT_EVENT_STATUS_FILTER, eventStatusesQueryValue, isPastEvent } from "$lib/utils/events.js";
+  import { DEFAULT_EVENT_STATUS_FILTER, EVENT_COVER_HINT, eventStatusesQueryValue, isPastEvent } from "$lib/utils/events.js";
   import EventStatusMultiSelect from "$lib/components/EventStatusMultiSelect.svelte";
   import { Card, CardContent } from "$lib/components/ui/card";
   import { Badge } from "$lib/components/ui/badge";
@@ -26,11 +32,12 @@
   import {
     afcStateFromEvent,
     buildAfcValuationPayload,
+    computeAfcPreview,
     createAfcState,
     describeAfcEventHours,
     validateAfcForSave,
   } from "$lib/utils/afcHoursForm.js";
-  import { CalendarDays, MapPin, Plus, User } from "lucide-svelte";
+  import { CalendarDays, LayoutGrid, List, MapPin, Plus, User } from "lucide-svelte";
 
   const FALLBACK_IMAGE =
     "https://gaceta.cch.unam.mx/sites/default/files/styles/imagen_articulos_1920x1080/public/2020-07/video_mensaje_1.jpg?h=d1cb525d&itok=4PYz5F61";
@@ -60,6 +67,34 @@
   let editAfcEvent = null;
   let editAfcError = "";
   let editHasAttendance = false;
+
+  const VIEW_STORAGE_KEY = "afc.adminEvents.view";
+  const EMPTY_BULK_CHANGES = {
+    status: "",
+    category: "",
+    location: "",
+    organizer: "",
+    capacityMode: "",
+    capacity: "",
+    registration_mode: "",
+    resubmission_policy: "",
+    cancel_policy: "",
+  };
+  const BULK_STATUS_OPTIONS = ["draft", "published", "cancelled"].map((value) => EVENT_STATUS_CATALOG[value]);
+  const REGISTRATION_MODE_OPTIONS = Object.values(EVENT_REGISTRATION_MODE_CATALOG);
+  const RESUBMISSION_POLICY_OPTIONS = Object.values(EVENT_RESUBMISSION_POLICY_CATALOG);
+  // Las políticas con fecha límite se capturan evento por evento.
+  const BULK_CANCEL_POLICY_OPTIONS = Object.values(EVENT_CANCEL_POLICY_CATALOG).filter((option) => !option.requiresDeadline);
+
+  let viewMode = "cards";
+  let selectedIds = [];
+  let bulkChanges = { ...EMPTY_BULK_CHANGES };
+  let bulkDialogOpen = false;
+  let bulkAfcEnabled = false;
+  let bulkAfcState = createAfcState();
+  let bulkFormError = "";
+  let bulkApplying = false;
+  let bulkErrors = [];
 
   let filters = {
     page: 1,
@@ -196,6 +231,148 @@
 
   function isCareerRestricted(ev) {
     return ev?.can_manage === false;
+  }
+
+  function isBlank(value) {
+    return value === undefined || value === null || String(value).trim() === "";
+  }
+
+  // Datos sin los que el evento no puede publicarse.
+  function missingEventData(ev) {
+    const missing = [];
+    if (isBlank(ev?.description)) missing.push("descripción");
+    if (!ev?.starts_at || !ev?.ends_at) missing.push("fechas");
+    if (isBlank(ev?.location ?? ev?.attributes?.location)) missing.push("ubicación");
+    if (isBlank(ev?.organizer ?? ev?.attributes?.organizer)) missing.push("organizador");
+    if (ev?.hours_value === null || ev?.hours_value === undefined) missing.push("horas AFC");
+    return missing;
+  }
+
+  function setViewMode(mode) {
+    viewMode = mode;
+    selectedIds = [];
+    bulkErrors = [];
+    try {
+      localStorage.setItem(VIEW_STORAGE_KEY, mode);
+    } catch {
+      // Sin almacenamiento local se usa la vista por defecto.
+    }
+  }
+
+  function toggleSelected(id) {
+    selectedIds = selectedIds.includes(id) ? selectedIds.filter((item) => item !== id) : [...selectedIds, id];
+  }
+
+  function toggleAllSelected() {
+    selectedIds = allSelected ? [] : [...manageableIds];
+  }
+
+  $: manageableIds = events.filter((ev) => !isCareerRestricted(ev)).map((ev) => ev.id);
+  $: allSelected = manageableIds.length > 0 && manageableIds.every((id) => selectedIds.includes(id));
+  $: hasBulkChanges =
+    bulkAfcEnabled ||
+    Object.entries(bulkChanges).some(([key, value]) => key !== "capacity" && String(value).trim() !== "");
+
+  function openBulkDialog() {
+    if (!selectedIds.length) return;
+    bulkChanges = { ...EMPTY_BULK_CHANGES };
+    bulkAfcEnabled = false;
+    bulkAfcState = createAfcState();
+    bulkFormError = "";
+    bulkDialogOpen = true;
+  }
+
+  function eventDateKey(ev) {
+    return isoToLocalDatetime(ev?.starts_at).slice(0, 10);
+  }
+
+  function validateBulkChanges() {
+    if (bulkChanges.capacityMode === "limited") {
+      const capacity = Number(bulkChanges.capacity);
+      if (!Number.isInteger(capacity) || capacity <= 0) return "El cupo debe ser un número entero mayor a 0.";
+    }
+    if (bulkAfcEnabled) {
+      const today = new Date().toISOString().slice(0, 10);
+      const preview = computeAfcPreview(bulkAfcState, { catalog: $afcCatalog.types, defaultDate: today });
+      if (preview.isCommittee) {
+        return "Las actividades del Comité de Carrera requieren dictamen; capáturalas evento por evento.";
+      }
+      const validation = validateAfcForSave(bulkAfcState, {
+        catalog: $afcCatalog.types,
+        status: bulkChanges.status || "draft",
+        defaultDate: today,
+      });
+      if (!validation.ok) return validation.message;
+    }
+    return "";
+  }
+
+  function buildBulkPayload(ev) {
+    const payload = {};
+    for (const key of ["status", "category", "registration_mode", "resubmission_policy", "cancel_policy"]) {
+      if (bulkChanges[key]) payload[key] = bulkChanges[key];
+    }
+    if (payload.cancel_policy) payload.cancel_deadline = null;
+    if (bulkChanges.location.trim()) payload.location = bulkChanges.location.trim();
+    if (bulkChanges.organizer.trim()) payload.organizer = bulkChanges.organizer.trim();
+    if (bulkChanges.capacityMode === "unlimited") {
+      payload.capacity_enabled = false;
+      payload.capacity = null;
+    } else if (bulkChanges.capacityMode === "limited") {
+      payload.capacity_enabled = true;
+      payload.capacity = Number(bulkChanges.capacity);
+    }
+    if (bulkAfcEnabled) {
+      // La fecha de cada evento se usa para los cursos de una sola jornada; la evidencia va evento por evento.
+      const afcValuation = buildAfcValuationPayload(bulkAfcState, {
+        catalog: $afcCatalog.types,
+        defaultDate: eventDateKey(ev),
+      });
+      if (afcValuation) payload.afc_valuation = { ...afcValuation, evidence_file_id: null };
+    }
+    return payload;
+  }
+
+  async function applyBulkChanges() {
+    if (!selectedIds.length || !hasBulkChanges || bulkApplying) return;
+    bulkFormError = validateBulkChanges();
+    if (bulkFormError) return;
+
+    bulkApplying = true;
+    bulkErrors = [];
+    let updated = 0;
+    for (const id of selectedIds) {
+      const ev = events.find((item) => item.id === id);
+      const payload = buildBulkPayload(ev);
+      const title = ev?.title || `Evento ${id}`;
+      try {
+        await adminEventsApi.updateEvent(id, payload);
+        updated += 1;
+      } catch (e) {
+        const message = e?.message || "No se pudo actualizar.";
+        const { status, ...otherChanges } = payload;
+        // Si falla el cambio de estatus (p. ej. faltan datos para publicar), se guardan los demás cambios.
+        if (status && Object.keys(otherChanges).length) {
+          try {
+            await adminEventsApi.updateEvent(id, otherChanges);
+            updated += 1;
+            bulkErrors = [...bulkErrors, { id, title, message: `Se guardaron los demás cambios, pero no cambió su estatus. ${message}` }];
+            continue;
+          } catch (retryError) {
+            bulkErrors = [...bulkErrors, { id, title, message: retryError?.message || message }];
+            continue;
+          }
+        }
+        bulkErrors = [...bulkErrors, { id, title, message }];
+      }
+    }
+    bulkApplying = false;
+    bulkDialogOpen = false;
+
+    if (updated) toast.success(`${updated} evento(s) actualizado(s).`);
+    if (bulkErrors.length) toast.warning(`${bulkErrors.length} evento(s) requieren revisión; consulta el detalle.`);
+    selectedIds = bulkErrors.map((item) => item.id);
+    await loadEvents({ page: filters.page });
   }
 
   function normalizeStaffUserId(value) {
@@ -411,6 +588,7 @@
       const { statuses, ...rest } = query;
       const res = await adminEventsApi.listEvents({ ...rest, status: eventStatusesQueryValue(statuses) });
       events = Array.isArray(res?.events) ? res.events : [];
+      selectedIds = selectedIds.filter((id) => events.some((ev) => ev.id === id && !isCareerRestricted(ev)));
       pagination = res?.pagination || pagination;
       filters = { ...filters, ...query };
     } catch (e) {
@@ -530,9 +708,10 @@
   }
 
   function validateUpdatePayload(payload) {
-    if (editHasAttendance) {
-      if (!payload.title) return "El título es obligatorio.";
-    } else {
+    const publishing = payload.status === "published";
+    if (!payload.title) return "El título es obligatorio.";
+    if (!payload.description) return "La descripción es obligatoria.";
+    if (!editHasAttendance) {
       const scheduleError = validateEditSchedule(payload);
       if (scheduleError) return scheduleError;
     }
@@ -544,11 +723,11 @@
         return "El cupo debe ser un entero mayor a 0 cuando está habilitado.";
       }
     }
-    if (!payload.location?.trim?.()) {
-      return "La ubicación es obligatoria.";
+    if (publishing && !payload.location?.trim?.()) {
+      return "Para publicar, la ubicación es obligatoria.";
     }
-    if (!payload.organizer?.trim?.()) {
-      return "El organizador es obligatorio.";
+    if (publishing && !payload.organizer?.trim?.()) {
+      return "Para publicar, el organizador es obligatorio.";
     }
     if (editForm.cancelPolicy === "free_until_deadline") {
       if (!editForm.cancelDeadlineDate || !editForm.cancelDeadlineTime) {
@@ -559,16 +738,19 @@
   }
 
   function validateEditSchedule(payload) {
-    if (!payload.title || !payload.starts_at || !payload.ends_at) {
-      return "Título, inicio y fin son obligatorios.";
+    if (payload.status === "published" && (!payload.starts_at || !payload.ends_at)) {
+      return "Para publicar, captura inicio y fin del evento.";
     }
-    if (new Date(payload.ends_at) <= new Date(payload.starts_at)) {
+    if (Boolean(payload.starts_at) !== Boolean(payload.ends_at)) {
+      return "Captura el inicio y también el fin del evento.";
+    }
+    if (payload.starts_at && new Date(payload.ends_at) <= new Date(payload.starts_at)) {
       return "La fecha/hora de fin debe ser mayor a la de inicio.";
     }
-    if (new Date(payload.starts_at).getTime() < Date.now()) {
+    if (payload.starts_at && new Date(payload.starts_at).getTime() < Date.now()) {
       return "La fecha/hora de inicio no puede estar en el pasado.";
     }
-    if (new Date(payload.ends_at).getTime() < Date.now()) {
+    if (payload.ends_at && new Date(payload.ends_at).getTime() < Date.now()) {
       return "La fecha/hora de fin no puede estar en el pasado.";
     }
     const afcValidation = validateAfcForSave(editAfcState, {
@@ -676,6 +858,11 @@
   }
 
   onMount(() => {
+    try {
+      if (localStorage.getItem(VIEW_STORAGE_KEY) === "table") viewMode = "table";
+    } catch {
+      // Sin almacenamiento local se usa la vista por defecto.
+    }
     loadEvents();
     loadStaffUsers();
     ensureAfcCatalog();
@@ -737,6 +924,156 @@
     <div class="mt-4 text-sm font-semibold text-red-600">{error}</div>
   {/if}
 
+  <div class="mt-4 flex items-center justify-end">
+    <div class="inline-flex rounded-xl border bg-white p-1" role="tablist" aria-label="Vista de eventos">
+      <button
+        type="button"
+        role="tab"
+        aria-selected={viewMode === "cards"}
+        class={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium ${viewMode === "cards" ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-100"}`}
+        onclick={() => setViewMode("cards")}
+      >
+        <LayoutGrid class="h-4 w-4" />
+        Tarjetas
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected={viewMode === "table"}
+        class={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium ${viewMode === "table" ? "bg-blue-600 text-white" : "text-slate-600 hover:bg-slate-100"}`}
+        onclick={() => setViewMode("table")}
+      >
+        <List class="h-4 w-4" />
+        Tabla
+      </button>
+    </div>
+  </div>
+
+  {#if viewMode === "table"}
+    <div class="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border bg-slate-50 px-4 py-3">
+      <div class="text-sm font-semibold">
+        {selectedIds.length
+          ? `${selectedIds.length} evento(s) seleccionado(s)`
+          : "Selecciona eventos en la tabla para editarlos en conjunto"}
+      </div>
+      <div class="flex gap-2">
+        {#if selectedIds.length}
+          <Button variant="ghost" class="h-9 rounded-xl" onclick={() => (selectedIds = [])} disabled={bulkApplying}>
+            Quitar selección
+          </Button>
+        {/if}
+        <Button
+          class="h-9 rounded-xl bg-blue-600 text-white hover:bg-blue-700"
+          onclick={openBulkDialog}
+          disabled={!selectedIds.length || bulkApplying}
+        >
+          Editar seleccionados
+        </Button>
+      </div>
+    </div>
+    <div>
+      {#if bulkErrors.length}
+        <div class="mt-3 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          <div class="font-semibold">Revisa {bulkErrors.length} evento(s):</div>
+          <ul class="mt-1 list-disc space-y-0.5 pl-5">
+            {#each bulkErrors as item (item.id)}
+              <li><span class="font-medium">{item.title}:</span> {item.message}</li>
+            {/each}
+          </ul>
+        </div>
+      {/if}
+    </div>
+
+    <div class="mt-4 overflow-x-auto rounded-2xl border bg-white">
+      <table class="w-full min-w-[960px] text-sm">
+        <thead class="bg-slate-50 text-left text-xs uppercase tracking-wide text-muted-foreground">
+          <tr>
+            <th class="w-10 px-3 py-3">
+              <input
+                type="checkbox"
+                class="h-4 w-4 accent-blue-600"
+                aria-label="Seleccionar todos los eventos de esta página"
+                checked={allSelected}
+                disabled={!manageableIds.length}
+                onchange={toggleAllSelected}
+              />
+            </th>
+            <th class="px-3 py-3">Evento</th>
+            <th class="px-3 py-3">Inicio</th>
+            <th class="px-3 py-3">Estatus</th>
+            <th class="px-3 py-3">Registro</th>
+            <th class="px-3 py-3">Reenvío</th>
+            <th class="px-3 py-3">Cancelación</th>
+            <th class="px-3 py-3">Staff</th>
+            <th class="px-3 py-3">Datos</th>
+          </tr>
+        </thead>
+        <tbody>
+          {#each events as ev (ev.id)}
+            {@const missing = missingEventData(ev)}
+            <tr
+              class={`border-t align-top ${selectedIds.includes(ev.id) ? "bg-blue-50/60" : ""} ${isCareerRestricted(ev) ? "text-slate-400" : ""}`}
+            >
+              <td class="px-3 py-3">
+                <input
+                  type="checkbox"
+                  class="h-4 w-4 accent-blue-600"
+                  aria-label={`Seleccionar ${ev.title}`}
+                  checked={selectedIds.includes(ev.id)}
+                  disabled={isCareerRestricted(ev)}
+                  onchange={() => toggleSelected(ev.id)}
+                />
+              </td>
+              <td class="max-w-[280px] px-3 py-3">
+                <button
+                  type="button"
+                  class="text-left font-semibold text-foreground hover:text-blue-700 hover:underline disabled:pointer-events-none"
+                  disabled={isCareerRestricted(ev)}
+                  onclick={() => openEditDialog(ev)}
+                >
+                  {ev.title}
+                </button>
+                <div class="mt-0.5 truncate text-xs text-muted-foreground">
+                  {eventCategory(ev)} · {eventOrganizer(ev)}
+                  {#if isCareerRestricted(ev)}· Otra carrera{/if}
+                </div>
+              </td>
+              <td class="whitespace-nowrap px-3 py-3">{formatDate(ev.starts_at)}</td>
+              <td class="px-3 py-3">
+                <Badge class="rounded-full bg-slate-100 text-slate-700 hover:bg-slate-100">
+                  {catalogLabel(EVENT_STATUS_CATALOG, ev.status)}
+                </Badge>
+              </td>
+              <td class="px-3 py-3">{catalogLabel(EVENT_REGISTRATION_MODE_CATALOG, ev.registration_mode)}</td>
+              <td class="px-3 py-3">{catalogLabel(EVENT_RESUBMISSION_POLICY_CATALOG, ev.resubmission_policy)}</td>
+              <td class="px-3 py-3">
+                {ev.cancel_policy === "free_cancel" && ev.cancel_deadline
+                  ? catalogLabel(EVENT_CANCEL_POLICY_CATALOG, "free_until_deadline")
+                  : catalogLabel(EVENT_CANCEL_POLICY_CATALOG, ev.cancel_policy)}
+              </td>
+              <td class="px-3 py-3 text-xs">
+                {#if ev.staff_user_email}
+                  {ev.staff_user_email}
+                {:else}
+                  <span class="text-amber-700">Sin asignar</span>
+                {/if}
+              </td>
+              <td class="px-3 py-3">
+                {#if missing.length}
+                  <Badge class="rounded-full bg-amber-50 text-amber-800 hover:bg-amber-50" title={`Falta: ${missing.join(", ")}`}>
+                    Faltan {missing.length}
+                  </Badge>
+                  <div class="mt-1 text-xs text-muted-foreground">{missing.join(", ")}</div>
+                {:else}
+                  <Badge class="rounded-full bg-emerald-50 text-emerald-700 hover:bg-emerald-50">Completo</Badge>
+                {/if}
+              </td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    </div>
+  {:else}
   <div class="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
     {#each events as ev (ev.id)}
       <Card
@@ -755,7 +1092,7 @@
         tabindex={isCareerRestricted(ev) ? "-1" : "0"}
       >
         <div
-          class="h-44 w-full bg-muted"
+          class="aspect-[2/1] w-full bg-muted"
           style:background-image={`url('${eventImage(ev)}')`}
           style:background-size="cover"
           style:background-position="center"
@@ -824,6 +1161,7 @@
       </Card>
     {/each}
   </div>
+  {/if}
 
   {#if !loading && !events.length}
     <div
@@ -900,6 +1238,7 @@
               bind:value={editForm.coverImageUrl}
               placeholder="https://ejemplo.com/portada.jpg"
             />
+            <p class="text-xs text-muted-foreground">{EVENT_COVER_HINT}</p>
             {#if editForm.coverImageUrl && !normalizedEditCoverImageUrl}
               <div class="text-xs font-semibold text-red-600">
                 Ingresa una URL válida (http/https).
@@ -909,19 +1248,21 @@
 
           {#if normalizedEditCoverImageUrl}
             <div class="sm:col-span-2 rounded-2xl border p-3">
-              {#if editCoverPreviewFailed}
-                <div class="py-6 text-center text-xs font-semibold text-red-600">
-                  No se pudo cargar la imagen con esa URL.
-                </div>
-              {:else}
-                <img
-                  src={normalizedEditCoverImageUrl}
-                  alt="Preview portada"
-                  class="h-44 w-full rounded-xl object-cover"
-                  onerror={() => (editCoverPreviewFailed = true)}
-                  onload={() => (editCoverPreviewFailed = false)}
-                />
-              {/if}
+              <div class="mx-auto flex aspect-[2/1] w-full max-w-md items-center justify-center overflow-hidden rounded-xl bg-slate-100">
+                {#if editCoverPreviewFailed}
+                  <div class="px-4 text-center text-xs font-semibold text-red-600">
+                    No se pudo cargar la imagen con esa URL.
+                  </div>
+                {:else}
+                  <img
+                    src={normalizedEditCoverImageUrl}
+                    alt="Preview portada"
+                    class="h-full w-full object-cover"
+                    onerror={() => (editCoverPreviewFailed = true)}
+                    onload={() => (editCoverPreviewFailed = false)}
+                  />
+                {/if}
+              </div>
             </div>
           {/if}
 
@@ -1271,6 +1612,140 @@
         disabled={deleting}
       >
         {deleting ? "Eliminando..." : "Sí, eliminar"}
+      </Button>
+    </Dialog.Footer>
+  </Dialog.Content>
+</Dialog.Root>
+
+<Dialog.Root bind:open={bulkDialogOpen}>
+  <Dialog.Content class="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
+    <Dialog.Header>
+      <Dialog.Title>Editar {selectedIds.length} evento(s)</Dialog.Title>
+      <Dialog.Description>
+        Solo se cambian los campos que modifiques; lo que quede en “Sin cambio” o vacío se conserva en cada evento.
+      </Dialog.Description>
+    </Dialog.Header>
+
+    <div class="space-y-5 py-2">
+      <section class="space-y-3">
+        <div class="text-sm font-semibold text-slate-700">Datos generales</div>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <div class="space-y-1">
+            <Label for="bulk-status">Estatus</Label>
+            <select id="bulk-status" class="h-10 w-full rounded-xl border bg-white px-2 text-sm" bind:value={bulkChanges.status}>
+              <option value="">Sin cambio</option>
+              {#each BULK_STATUS_OPTIONS as option (option.value)}
+                <option value={option.value}>{option.label}</option>
+              {/each}
+            </select>
+          </div>
+          <div class="space-y-1">
+            <Label for="bulk-category">Categoría</Label>
+            <select id="bulk-category" class="h-10 w-full rounded-xl border bg-white px-2 text-sm" bind:value={bulkChanges.category}>
+              <option value="">Sin cambio</option>
+              {#each categoryOptions as option (option.value)}
+                <option value={option.value}>{option.label}</option>
+              {/each}
+            </select>
+          </div>
+          <div class="space-y-1">
+            <Label for="bulk-location">Ubicación</Label>
+            <Input id="bulk-location" class="h-10 rounded-xl" placeholder="Sin cambio" bind:value={bulkChanges.location} />
+          </div>
+          <div class="space-y-1">
+            <Label for="bulk-organizer">Organizador</Label>
+            <Input id="bulk-organizer" class="h-10 rounded-xl" placeholder="Sin cambio" bind:value={bulkChanges.organizer} />
+          </div>
+          <div class="space-y-1">
+            <Label for="bulk-capacity-mode">Cupo</Label>
+            <select id="bulk-capacity-mode" class="h-10 w-full rounded-xl border bg-white px-2 text-sm" bind:value={bulkChanges.capacityMode}>
+              <option value="">Sin cambio</option>
+              <option value="unlimited">Sin límite</option>
+              <option value="limited">Limitar a…</option>
+            </select>
+          </div>
+          {#if bulkChanges.capacityMode === "limited"}
+            <div class="space-y-1">
+              <Label for="bulk-capacity">Lugares por evento</Label>
+              <Input id="bulk-capacity" class="h-10 rounded-xl" type="number" min="1" bind:value={bulkChanges.capacity} />
+            </div>
+          {/if}
+        </div>
+      </section>
+
+      <section class="space-y-3">
+        <div class="text-sm font-semibold text-slate-700">Registro y políticas</div>
+        <div class="grid gap-3 sm:grid-cols-3">
+          <div class="space-y-1">
+            <Label for="bulk-registration-mode">Tipo de registro</Label>
+            <select id="bulk-registration-mode" class="h-10 w-full rounded-xl border bg-white px-2 text-sm" bind:value={bulkChanges.registration_mode}>
+              <option value="">Sin cambio</option>
+              {#each REGISTRATION_MODE_OPTIONS as option (option.value)}
+                <option value={option.value}>{option.label}</option>
+              {/each}
+            </select>
+          </div>
+          <div class="space-y-1">
+            <Label for="bulk-resubmission">Política de reenvío</Label>
+            <select id="bulk-resubmission" class="h-10 w-full rounded-xl border bg-white px-2 text-sm" bind:value={bulkChanges.resubmission_policy}>
+              <option value="">Sin cambio</option>
+              {#each RESUBMISSION_POLICY_OPTIONS as option (option.value)}
+                <option value={option.value}>{option.label}</option>
+              {/each}
+            </select>
+          </div>
+          <div class="space-y-1">
+            <Label for="bulk-cancel-policy">Política de cancelación</Label>
+            <select id="bulk-cancel-policy" class="h-10 w-full rounded-xl border bg-white px-2 text-sm" bind:value={bulkChanges.cancel_policy}>
+              <option value="">Sin cambio</option>
+              {#each BULK_CANCEL_POLICY_OPTIONS as option (option.value)}
+                <option value={option.value}>{option.label}</option>
+              {/each}
+            </select>
+          </div>
+        </div>
+      </section>
+
+      <section class="space-y-3 rounded-2xl border p-4">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <div class="text-sm font-semibold text-slate-700">Horas AFC</div>
+            <div class="text-xs text-muted-foreground">
+              Aplica la misma actividad a todos. Los cursos de una jornada usan la fecha de cada evento; el dictamen del
+              Comité se adjunta evento por evento.
+            </div>
+          </div>
+          <Switch aria-label="Cambiar horas AFC" bind:checked={bulkAfcEnabled} />
+        </div>
+        {#if bulkAfcEnabled}
+          <AfcHoursSection
+            bind:state={bulkAfcState}
+            catalog={$afcCatalog.types}
+            catalogStatus={$afcCatalog.status === "idle" ? "loading" : $afcCatalog.status}
+            catalogError={$afcCatalog.error}
+            idPrefix="bulk-event-afc"
+            defaultDate={new Date().toISOString().slice(0, 10)}
+          />
+        {/if}
+      </section>
+
+      <p class="text-xs text-muted-foreground">
+        Un evento solo se publica si tiene todos sus datos (fechas, ubicación, organizador y horas AFC). Los que no
+        cumplan se listarán con el motivo.
+      </p>
+      {#if bulkFormError}
+        <div class="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{bulkFormError}</div>
+      {/if}
+    </div>
+
+    <Dialog.Footer>
+      <Button variant="outline" onclick={() => (bulkDialogOpen = false)} disabled={bulkApplying}>Cancelar</Button>
+      <Button
+        class="bg-blue-600 text-white hover:bg-blue-700"
+        onclick={applyBulkChanges}
+        disabled={!hasBulkChanges || bulkApplying}
+      >
+        {bulkApplying ? "Guardando..." : `Aplicar a ${selectedIds.length} evento(s)`}
       </Button>
     </Dialog.Footer>
   </Dialog.Content>

@@ -3,6 +3,7 @@
 	import { tick } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import { adminEventsApi, adminStaffUsersApi } from '$lib/services/api';
+	import { EVENT_COVER_HINT } from '$lib/utils/events.js';
  	import {
 		EVENT_STATUS_CATALOG,
 		EVENT_REGISTRATION_MODE_CATALOG,
@@ -536,80 +537,63 @@
 
 	function buildCsvEventPayload(row) {
 		const startsAt = toIsoFromDateTime(row.date, row.time);
-		const endsAt =
-			toIsoFromDateTime(row.endDate, row.endTime) ||
-			(startsAt ? addHoursToIso(startsAt, Number(row.hoursValue) || 2) : null);
-		const cancelDeadline = toIsoFromDateTime(row.cancelDeadlineDate, row.cancelDeadlineTime);
-		const geo =
-			row.geoEnforced && row.geoCenterLat !== '' && row.geoCenterLng !== ''
-				? {
-					center_lat: Number(row.geoCenterLat),
-					center_lng: Number(row.geoCenterLng),
-					radius_m: Number(row.geoRadiusM) || 120,
-					strict_accuracy_m:
-						row.geoStrictAccuracyM === '' ? null : Number(row.geoStrictAccuracyM)
-				}
-				: null;
+		const endsAt = toIsoFromDateTime(row.endDate, row.endTime);
+		const capacity = row.cupo ? Number(row.cupo) : null;
+		const coverImageUrl = normalizeWebImageUrl(row.coverImageUrl) || null;
 
+		// Borrador sin horas ni staff: se completa después desde la lista de eventos.
 		return {
-			title: row.title?.trim(),
-			description: row.description?.trim() || null,
+			title: row.title,
+			description: row.description,
 			category: row.category,
-			location: row.location?.trim() || null,
-			organizer: row.organizer?.trim() || null,
+			location: row.location || null,
+			organizer: row.organizer || null,
 			starts_at: startsAt,
 			ends_at: endsAt,
-			hours_value: row.hoursValue,
-			capacity_enabled: Boolean(row.capacityEnabled),
-			capacity: row.capacityEnabled ? (row.cupo === '' ? null : Number(row.cupo)) : null,
-			status: row.status || 'draft',
-			registration_mode: row.registrationMode || 'auto',
-			resubmission_policy: row.resubmissionPolicy || 'only_changes_requested',
-			allow_self_checkin: Boolean(row.allowSelfCheckin),
-			cover_image_url: normalizeWebImageUrl(row.coverImageUrl) || null,
-			geo_enforced: Boolean(row.geoEnforced),
-			cancel_policy: resolveCancelPolicyForPayload(row.cancelPolicy || 'free_cancel'),
-			cancel_deadline: getCancelPolicyMeta(row.cancelPolicy || 'free_cancel').requiresDeadline
-				? cancelDeadline
-				: cancelDeadline,
-			geo,
-			sessions: buildSingleSession(startsAt, endsAt, row.hoursValue),
+			hours_value: null,
+			capacity_enabled: capacity !== null,
+			capacity,
+			status: 'draft',
+			cover_image_url: coverImageUrl,
+			sessions: buildSingleSession(startsAt, endsAt, null),
 			attributes: {
-				location: row.location?.trim() || null,
-				organizer: row.organizer?.trim() || null,
-				cover_image_url: normalizeWebImageUrl(row.coverImageUrl) || null,
-				...(row.staffUserId ? { staff_user_id: Number(row.staffUserId) } : {})
-			},
-			...(row.staffUserId
-				? { assign_staff: true, staff_user_id: Number(row.staffUserId) }
-				: {})
+				location: row.location || null,
+				organizer: row.organizer || null,
+				cover_image_url: coverImageUrl
+			}
 		};
 	}
 
 	function validatePayload(payload, source = form) {
 		const payloadLocation = payload?.location || payload?.attributes?.location;
 		const payloadOrganizer = payload?.organizer || payload?.attributes?.organizer;
-		if (!payload?.title || !payload?.starts_at || !payload?.ends_at) {
-			return 'Título, fecha y hora son requeridos.';
+		const isDraft = (payload?.status || 'draft') === 'draft';
+		if (!payload?.title) return 'El título del evento es obligatorio.';
+		if (!payload?.description) return 'La descripción del evento es obligatoria.';
+		if (!isDraft) {
+			if (!payload?.starts_at || !payload?.ends_at) return 'Para publicar, captura fecha y hora de inicio y de fin.';
+			if (!payloadLocation?.trim?.()) return 'Para publicar, la ubicación es obligatoria.';
+			if (!payloadOrganizer?.trim?.()) return 'Para publicar, el organizador es obligatorio.';
 		}
-		if (!payloadLocation?.trim?.()) {
-			return 'La ubicación es obligatoria.';
-		}
-		if (!payloadOrganizer?.trim?.()) {
-			return 'El organizador es obligatorio.';
+		if (Boolean(payload?.starts_at) !== Boolean(payload?.ends_at)) {
+			return 'Captura la fecha y hora de inicio y también las de fin.';
 		}
 		const now = Date.now();
-		if (new Date(payload.starts_at).getTime() < now) {
+		if (payload.starts_at && new Date(payload.starts_at).getTime() < now) {
 			return 'La fecha/hora de inicio no puede estar en el pasado.';
 		}
-		if (new Date(payload.ends_at).getTime() < now) {
+		if (payload.ends_at && new Date(payload.ends_at).getTime() < now) {
 			return 'La fecha/hora de fin no puede estar en el pasado.';
 		}
-		if (new Date(payload.ends_at) <= new Date(payload.starts_at)) {
+		if (payload.starts_at && new Date(payload.ends_at) <= new Date(payload.starts_at)) {
 			return 'La fecha/hora de fin debe ser mayor a la de inicio.';
 		}
 		const hoursValue = parseHoursInput(payload.hours_value);
-		if (!payload.afc_valuation && (hoursValue === null || hoursValue < 0 || hoursValue > MAX_EVENT_HOURS)) {
+		if (
+			!payload.afc_valuation &&
+			payload.hours_value !== null &&
+			(hoursValue === null || hoursValue < 0 || hoursValue > MAX_EVENT_HOURS)
+		) {
 			return `Las horas acreditables deben ser un decimal entre 0 y ${MAX_EVENT_HOURS}, sin letras.`;
 		}
 		if (payload.capacity_enabled) {
@@ -628,12 +612,16 @@
 
 	function validateManualForm() {
 		const errors = {};
+		const publishing = form.status !== 'draft';
 
 		if (!form.title?.trim()) errors.title = 'Campo obligatorio';
-		if (!form.date) errors.date = 'Campo obligatorio';
-		if (!form.time) errors.time = 'Campo obligatorio';
-		if (!form.location?.trim()) errors.location = 'Campo obligatorio';
-		if (!form.organizer?.trim()) errors.organizer = 'Campo obligatorio';
+		if (!form.description?.trim()) errors.description = 'Campo obligatorio';
+		if (publishing) {
+			if (!form.date) errors.date = 'Campo obligatorio';
+			if (!form.time) errors.time = 'Campo obligatorio';
+			if (!form.location?.trim()) errors.location = 'Campo obligatorio';
+			if (!form.organizer?.trim()) errors.organizer = 'Campo obligatorio';
+		}
 		const startsAt = toIsoFromDateTime(form.date, form.time);
 		const endsAt = toIsoFromDateTime(form.endDate, form.endTime);
 		if (startsAt && new Date(startsAt).getTime() < Date.now()) {
@@ -681,23 +669,25 @@
 
 	function validateManualField(field) {
 		let message;
+		const publishing = form.status !== 'draft';
 		if (field === 'title' && !form.title?.trim()) message = 'El título del evento es obligatorio.';
-		if (field === 'location' && !form.location?.trim()) message = 'La ubicación es obligatoria.';
-		if (field === 'organizer' && !form.organizer?.trim()) message = 'El organizador es obligatorio.';
+		if (field === 'description' && !form.description?.trim()) message = 'La descripción del evento es obligatoria.';
+		if (field === 'location' && publishing && !form.location?.trim()) message = 'La ubicación es obligatoria para publicar.';
+		if (field === 'organizer' && publishing && !form.organizer?.trim()) message = 'El organizador es obligatorio para publicar.';
 		if (field === 'date') {
-			if (!form.date) message = 'La fecha de inicio es obligatoria.';
+			if (!form.date) message = publishing ? 'La fecha de inicio es obligatoria para publicar.' : undefined;
 			else if (form.time && new Date(toIsoFromDateTime(form.date, form.time)).getTime() < Date.now()) message = 'La fecha y hora de inicio no pueden estar en el pasado.';
 		}
 		if (field === 'time') {
-			if (!form.time) message = 'La hora de inicio es obligatoria.';
+			if (!form.time) message = publishing ? 'La hora de inicio es obligatoria para publicar.' : undefined;
 			else if (form.date && new Date(toIsoFromDateTime(form.date, form.time)).getTime() < Date.now()) message = 'La fecha y hora de inicio no pueden estar en el pasado.';
 		}
 		if (field === 'endDate') {
-			if (!form.endDate) message = 'La fecha de fin es obligatoria.';
+			if (!form.endDate) message = publishing ? 'La fecha de fin es obligatoria para publicar.' : undefined;
 			else if (form.endTime && new Date(toIsoFromDateTime(form.endDate, form.endTime)).getTime() < Date.now()) message = 'La fecha y hora de fin no pueden estar en el pasado.';
 		}
 		if (field === 'endTime') {
-			if (!form.endTime) message = 'La hora de fin es obligatoria.';
+			if (!form.endTime) message = publishing ? 'La hora de fin es obligatoria para publicar.' : undefined;
 			else if (form.endDate && new Date(toIsoFromDateTime(form.endDate, form.endTime)).getTime() < Date.now()) message = 'La fecha y hora de fin no pueden estar en el pasado.';
 		}
 		fieldErrors = { ...fieldErrors, [field]: message };
@@ -765,11 +755,9 @@
 	async function createBulkEvents() {
 		if (!bulk.rows.length) return;
 
-		const validationErrors = bulk.rows.flatMap((row, index) => {
-			const message = validatePayload(buildCsvEventPayload(row), row);
-			return message
-				? [{ index: row.csvLine || index + 2, title: row.title || 'Evento sin título', errs: [message] }]
-				: [];
+		const validationErrors = bulk.rows.flatMap((row) => {
+			const errs = validateCsvRow(row);
+			return errs.length ? [{ index: row.csvLine, title: row.title || 'Evento sin título', errs }] : [];
 		});
 		if (validationErrors.length) {
 			bulk.errors = validationErrors;
@@ -782,7 +770,9 @@
 		submitting = true;
 		try {
 			const response = await adminEventsApi.createEventsBulk(bulk.rows.map(buildCsvEventPayload));
-			toast.success(response?.message || `Eventos creados: ${bulk.rows.length}`);
+			toast.success(
+				`${response?.message || `Eventos creados: ${bulk.rows.length}`} Quedaron como borrador, con datos pendientes.`
+			);
 			cancelCsvMode();
 		} catch (error) {
 			const apiErrors = Array.isArray(error?.data?.errors) ? error.data.errors : [];
@@ -866,26 +856,46 @@
 		return rows;
 	}
 
-	function parseBool(v, fallback = true) {
-		const s = String(v ?? '').trim().toLowerCase();
-		if (!s) return fallback;
-		return ['1', 'true', 'si', 'sí', 'yes', 'y'].includes(s);
+	// Encabezados en español; se aceptan con o sin acentos, mayúsculas o espacios.
+	const CSV_COLUMNS = [
+		['titulo', 'Título'],
+		['descripcion', 'Descripción'],
+		['categoria', 'Categoría'],
+		['fecha_inicio', 'Fecha de inicio'],
+		['hora_inicio', 'Hora de inicio'],
+		['fecha_fin', 'Fecha de fin'],
+		['hora_fin', 'Hora de fin'],
+		['ubicacion', 'Ubicación'],
+		['organizador', 'Organizador'],
+		['cupo', 'Cupo'],
+		['url_imagen', 'URL de imagen']
+	];
+	const CSV_REQUIRED_COLUMNS = ['titulo', 'descripcion'];
+	const csvColumnLabels = Object.fromEntries(CSV_COLUMNS);
+
+	function normalizeCsvKey(value) {
+		return String(value ?? '')
+			.trim()
+			.toLowerCase()
+			.normalize('NFD')
+			.replace(/[\u0300-\u036f]/g, '')
+			.replace(/[^a-z0-9]+/g, '_')
+			.replace(/^_+|_+$/g, '');
 	}
 
-	function parseNumber(v, fallback = 0) {
-		const n = Number(v);
-		return Number.isFinite(n) ? n : fallback;
+	function resolveCsvCategory(value) {
+		const key = normalizeCsvKey(value);
+		if (!key) return 'general';
+		const match = EVENT_CATEGORY_OPTIONS.find(
+			(option) => normalizeCsvKey(option.value) === key || normalizeCsvKey(option.label) === key
+		);
+		return match ? match.value : null;
 	}
 
-	const csvHeaderLabels = {
-		title: 'Título del evento',
-		date: 'Fecha de inicio',
-		time: 'Hora de inicio',
-		end_date: 'Fecha de fin',
-		end_time: 'Hora de fin',
-		location: 'Ubicación',
-		organizer: 'Organizador'
-	};
+	function normalizeCsvTime(value) {
+		const text = String(value ?? '').trim();
+		return /^\d:[0-5]\d$/.test(text) ? `0${text}` : text;
+	}
 
 	function isValidCsvDate(value) {
 		if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
@@ -897,77 +907,35 @@
 		return /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value);
 	}
 
-	function isValidCsvBoolean(value) {
-		return ['', '1', '0', 'true', 'false', 'si', 'sí', 'no', 'yes', 'y', 'n'].includes(
-			String(value ?? '').trim().toLowerCase()
-		);
-	}
-
-	function validateRow(row, source, lineNumber) {
+	function validateCsvRow(row) {
 		const errs = [];
-		for (const key of ['title', 'date', 'time', 'end_date', 'end_time', 'location', 'organizer']) {
-			if (!String(source[key] || '').trim()) errs.push(`${csvHeaderLabels[key]} es obligatorio.`);
+		if (!row.title) errs.push('El campo “Título” es obligatorio.');
+		if (!row.description) errs.push('El campo “Descripción” es obligatorio.');
+		if (!row.category) {
+			errs.push(
+				`La categoría “${row.categoryInput}” no existe. Usa: ${EVENT_CATEGORY_OPTIONS.map((option) => option.label).join(', ')}.`
+			);
 		}
-		if (source.date && !isValidCsvDate(source.date)) {
-			errs.push('Fecha de inicio debe usar el formato AAAA-MM-DD y ser una fecha real.');
-		}
-		if (source.end_date && !isValidCsvDate(source.end_date)) {
-			errs.push('Fecha de fin debe usar el formato AAAA-MM-DD y ser una fecha real.');
-		}
-		if (source.time && !isValidCsvTime(source.time)) {
-			errs.push('Hora de inicio debe usar el formato HH:MM de 24 horas.');
-		}
-		if (source.end_time && !isValidCsvTime(source.end_time)) {
-			errs.push('Hora de fin debe usar el formato HH:MM de 24 horas.');
-		}
-		if (
-			isValidCsvDate(source.date) &&
-			isValidCsvTime(source.time) &&
-			isValidCsvDate(source.end_date) &&
-			isValidCsvTime(source.end_time) &&
-			new Date(`${source.end_date}T${source.end_time}:00`) <=
-				new Date(`${source.date}T${source.time}:00`)
-		) {
-			errs.push('La fecha/hora de fin debe ser mayor a la de inicio.');
-		}
-		const csvHoursValue = parseHoursInput(source.hours_value);
-		if (source.hours_value && (csvHoursValue === null || csvHoursValue < 0 || csvHoursValue > MAX_EVENT_HOURS)) {
-			errs.push(`Horas acreditables debe ser un decimal simple entre 0 y ${MAX_EVENT_HOURS}.`);
-		}
-		for (const key of ['capacity_enabled', 'allow_self_checkin', 'geo_enforced']) {
-			if (!isValidCsvBoolean(source[key])) {
-				errs.push(`El valor de ${key === 'capacity_enabled' ? '“Limitar cupo”' : key === 'allow_self_checkin' ? '“Permitir self check-in”' : '“Geocerca obligatoria”'} debe ser true o false.`);
+
+		const schedule = [row.date, row.time, row.endDate, row.endTime];
+		if (schedule.some(Boolean)) {
+			if (!schedule.every(Boolean)) errs.push('Si capturas fechas, llena fecha y hora de inicio y también de fin.');
+			if (row.date && !isValidCsvDate(row.date)) errs.push('La fecha de inicio debe tener el formato AAAA-MM-DD.');
+			if (row.endDate && !isValidCsvDate(row.endDate)) errs.push('La fecha de fin debe tener el formato AAAA-MM-DD.');
+			if (row.time && !isValidCsvTime(row.time)) errs.push('La hora de inicio debe tener el formato HH:MM (24 h).');
+			if (row.endTime && !isValidCsvTime(row.endTime)) errs.push('La hora de fin debe tener el formato HH:MM (24 h).');
+			const startsAt = toIsoFromDateTime(row.date, row.time);
+			const endsAt = toIsoFromDateTime(row.endDate, row.endTime);
+			if (!errs.length && startsAt && endsAt) {
+				if (new Date(startsAt).getTime() < Date.now()) errs.push('La fecha de inicio no puede estar en el pasado.');
+				if (new Date(endsAt) <= new Date(startsAt)) errs.push('La fecha y hora de fin deben ser posteriores al inicio.');
 			}
 		}
-		if (row.capacityEnabled && (!/^\d+$/.test(source.capacity || '') || Number(source.capacity) <= 0)) {
-			errs.push('Cupo debe ser un entero mayor a 0 cuando está habilitado.');
+		if (row.cupo && (!/^\d+$/.test(row.cupo) || Number(row.cupo) <= 0)) {
+			errs.push('El cupo debe ser un número entero mayor a 0; déjalo vacío para no limitarlo.');
 		}
-		if (!EVENT_CATEGORY_OPTIONS.some((option) => option.value === source.category)) {
-			errs.push('Categoría no corresponde a una opción permitida.');
-		}
-		if (!Object.hasOwn(EVENT_STATUS_CATALOG, row.status)) errs.push('Estatus no es válido.');
-		if (!Object.hasOwn(EVENT_REGISTRATION_MODE_CATALOG, row.registrationMode)) errs.push('Modo de registro no es válido.');
-		if (!Object.hasOwn(EVENT_RESUBMISSION_POLICY_CATALOG, row.resubmissionPolicy)) errs.push('Política de reenvío no es válida.');
-		if (!Object.hasOwn(EVENT_CANCEL_POLICY_CATALOG, row.cancelPolicy)) errs.push('Política de cancelación no es válida.');
-		if (row.geoEnforced) {
-			const lat = Number(source.geo_center_lat);
-			const lng = Number(source.geo_center_lng);
-			const radius = Number(source.geo_radius_m);
-			if (source.geo_center_lat === '' || !Number.isFinite(lat) || lat < -90 || lat > 90) errs.push('Latitud debe estar entre -90 y 90.');
-			if (source.geo_center_lng === '' || !Number.isFinite(lng) || lng < -180 || lng > 180) errs.push('Longitud debe estar entre -180 y 180.');
-			if (!Number.isFinite(radius) || radius <= 0) errs.push('Radio de geocerca debe ser mayor a 0 metros.');
-		}
-		if (source.cover_image_url && !normalizeWebImageUrl(source.cover_image_url)) errs.push('URL de imagen no es válida.');
-		if (source.staff_user_id && (!/^\d+$/.test(source.staff_user_id) || Number(source.staff_user_id) <= 0)) errs.push('Identificador de staff debe ser un entero mayor a 0.');
-
-		if (!errs.length) {
-			const payloadMessage = validatePayload(buildCsvEventPayload(row), row);
-			if (payloadMessage) errs.push(payloadMessage);
-		}
-
-		return errs.length
-			? { index: lineNumber, title: row.title || 'Evento sin título', errs }
-			: null;
+		if (row.coverImageUrl && !normalizeWebImageUrl(row.coverImageUrl)) errs.push('La URL de imagen no es válida.');
+		return errs;
 	}
 
 	async function onPickCsv(e) {
@@ -979,7 +947,7 @@
 
 		if (!file) return;
 
-		const text = await file.text();
+		const text = (await file.text()).replace(/^\uFEFF/, '');
 		const table = parseCsv(text);
 		if (!table.length) {
 			bulk.errors = [{ index: 1, title: 'Archivo CSV', errs: ['El archivo está vacío o no tiene un formato válido.'] }];
@@ -990,17 +958,19 @@
 		}
 
 		// headers
-		const headers = table[0].map((h) => String(h ?? '').trim().toLowerCase());
-		const required = ['title', 'date', 'time', 'end_date', 'end_time', 'location', 'organizer'];
-		for (const reqHeader of required) {
-			if (!headers.includes(reqHeader)) {
-				bulk.errors = [{ index: 1, title: 'Encabezado del archivo', errs: [`Falta la columna obligatoria “${csvHeaderLabels[reqHeader]}”.`] }];
-				bulkValidationErrors = bulk.errors;
-				bulkErrorsDialogOpen = true;
-				bulk.mode = false;
-				if (input) input.value = '';
-				return;
-			}
+		const headers = table[0].map(normalizeCsvKey);
+		const headerError = headers.includes('title')
+			? 'El archivo usa la plantilla anterior en inglés. Descarga el ejemplo nuevo y copia tus datos ahí.'
+			: CSV_REQUIRED_COLUMNS.filter((key) => !headers.includes(key))
+					.map((key) => `Falta la columna obligatoria “${key}” (${csvColumnLabels[key]}).`)
+					.join(' ');
+		if (headerError) {
+			bulk.errors = [{ index: 1, title: 'Encabezados del archivo', errs: [headerError] }];
+			bulkValidationErrors = bulk.errors;
+			bulkErrorsDialogOpen = true;
+			bulk.mode = false;
+			if (input) input.value = '';
+			return;
 		}
 
 		const rows = [];
@@ -1015,36 +985,22 @@
 
 			const mapped = {
 				csvLine: i + 1,
-				title: obj.title || '',
-				category: obj.category || 'general',
-				description: obj.description || '',
-				date: obj.date || '',
-				time: obj.time || '',
-				endDate: obj.end_date || '',
-				endTime: obj.end_time || '',
-				hoursValue: obj.hours_value || '2',
-				capacityEnabled: parseBool(obj.capacity_enabled, true),
-				cupo: obj.capacity || obj.cupo || '',
-				location: obj.location || '',
-				organizer: obj.organizer || '',
-				status: obj.status || 'draft',
-				registrationMode: obj.registration_mode || 'auto',
-				resubmissionPolicy: obj.resubmission_policy || 'only_changes_requested',
-				allowSelfCheckin: parseBool(obj.allow_self_checkin, true),
-				geoEnforced: parseBool(obj.geo_enforced, false),
-				geoCenterLat: obj.geo_center_lat || '',
-				geoCenterLng: obj.geo_center_lng || '',
-				geoRadiusM: parseNumber(obj.geo_radius_m, 120),
-				geoStrictAccuracyM: obj.geo_strict_accuracy_m || '',
-				cancelPolicy: obj.cancel_policy || 'free_cancel',
-				cancelDeadlineDate: obj.cancel_deadline_date || '',
-				cancelDeadlineTime: obj.cancel_deadline_time || '',
-				coverImageUrl: obj.cover_image_url || '',
-				staffUserId: obj.staff_user_id || ''
+				title: obj.titulo || '',
+				description: obj.descripcion || '',
+				categoryInput: obj.categoria || '',
+				category: resolveCsvCategory(obj.categoria),
+				date: obj.fecha_inicio || '',
+				time: normalizeCsvTime(obj.hora_inicio),
+				endDate: obj.fecha_fin || '',
+				endTime: normalizeCsvTime(obj.hora_fin),
+				location: obj.ubicacion || '',
+				organizer: obj.organizador || '',
+				cupo: obj.cupo || '',
+				coverImageUrl: obj.url_imagen || ''
 			};
 
-			const err = validateRow(mapped, obj, i + 1);
-			if (err) errors.push(err);
+			const errs = validateCsvRow(mapped);
+			if (errs.length) errors.push({ index: i + 1, title: mapped.title || 'Evento sin título', errs });
 			rows.push(mapped);
 		}
 
@@ -1070,25 +1026,33 @@
 	}
 
 	function downloadCsvTemplate() {
-		const baseDate = new Date();
-		baseDate.setDate(baseDate.getDate() + 30);
-		const secondDate = new Date(baseDate);
-		secondDate.setDate(secondDate.getDate() + 2);
-		const cancellationDate = new Date(secondDate);
-		cancellationDate.setDate(cancellationDate.getDate() - 1);
-		const formatDate = (value) => value.toISOString().slice(0, 10);
-		const content =
-			'title,category,description,date,time,end_date,end_time,hours_value,capacity_enabled,capacity,location,organizer,status,registration_mode,resubmission_policy,allow_self_checkin,geo_enforced,geo_center_lat,geo_center_lng,geo_radius_m,geo_strict_accuracy_m,cancel_policy,cancel_deadline_date,cancel_deadline_time,cover_image_url,staff_user_id\n' +
-			`"Semana de Ingeniería y Tecnología",general,"Conferencias y talleres para la comunidad universitaria",${formatDate(baseDate)},10:00,${formatDate(baseDate)},13:00,3,true,120,"Auditorio Principal","Coordinación Académica",published,auto,only_changes_requested,true,false,,,120,,free_cancel,,,"https://images.unsplash.com/photo-1540575467063-178a50c2df87",\n` +
-			`"Foro de Innovación Social",emprendimiento,"Panel con especialistas y organizaciones invitadas",${formatDate(secondDate)},16:00,${formatDate(secondDate)},18:30,2.5,false,,"Sala de Usos Múltiples","Dirección de Vinculación",draft,manual_review,allowed,true,true,19.432608,-99.133209,120,40,locked,${formatDate(cancellationDate)},18:00,"https://images.unsplash.com/photo-1511578314322-379afb476865",\n`;
+		const formatDate = (daysAhead) => {
+			const value = new Date();
+			value.setDate(value.getDate() + daysAhead);
+			return value.toISOString().slice(0, 10);
+		};
+		const header = CSV_COLUMNS.map(([key]) => key).join(',');
+		const rows = [
+			['Semana de Ingeniería y Tecnología', 'Conferencias y talleres para la comunidad universitaria', 'General', formatDate(30), '10:00', formatDate(30), '13:00', 'Auditorio Principal', 'Coordinación Académica', '120', 'https://images.unsplash.com/photo-1540575467063-178a50c2df87'],
+			['Foro de Innovación Social', 'Panel con especialistas y organizaciones invitadas', 'Emprendimiento', formatDate(32), '16:00', formatDate(32), '18:30', 'Sala de Usos Múltiples', 'Dirección de Vinculación', '', ''],
+			['Torneo Relámpago de Fútbol Rápido', 'Torneo por equipos mixtos entre carreras', 'Deportivas', formatDate(35), '09:00', formatDate(35), '14:00', 'Canchas de Fútbol Rápido', 'Departamento de Actividades Deportivas', '80', ''],
+			['Muestra de Cine Mexicano', 'Proyección y charla con la directora invitada', 'Culturales', '', '', '', '', 'Teatro José Vasconcelos', 'Departamento de Actividades Culturales', '150', ''],
+			['Taller de Redacción de Artículos Científicos', 'Taller práctico de estructura y estilo para publicar investigación', '', '', '', '', '', '', '', '', '']
+		];
+		const content = [header, ...rows.map((row) => row.map(csvCell).join(','))].join('\n') + '\n';
 
-		const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+		const blob = new Blob(['\ufeff', content], { type: 'text/csv;charset=utf-8;' });
 		const url = URL.createObjectURL(blob);
 		const a = document.createElement('a');
 		a.href = url;
-		a.download = 'eventos-template.csv';
+		a.download = 'eventos-ejemplo.csv';
 		a.click();
 		URL.revokeObjectURL(url);
+	}
+
+	function csvCell(value) {
+		const text = String(value ?? '');
+		return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 	}
 
 	const cardShadow =
@@ -1156,17 +1120,15 @@
 			>
 				<!-- Slide 1: Editar -->
 				<section class="w-full flex-none space-y-6 overflow-x-hidden">
-					<!--
-					Carga masiva por CSV deshabilitada: la plantilla aún usa hours_value manual y no el catálogo AFC
-					(tipo/supuesto). Reactivar cuando se adapte; la lógica (onPickCsv, buildCsvEventPayload,
-					createEventsBulk) sigue en este archivo.
 					<Card class={`rounded-3xl border bg-card text-card-foreground ${cardShadow}`}>
 						<CardContent class="p-5">
 							<div class="flex items-start justify-between gap-4">
 								<div>
 									<div class="text-[14px] font-extrabold text-foreground">Crear desde CSV</div>
 									<div class="mt-1 text-sm text-muted-foreground">
-										El archivo completo se valida antes de crear cualquier evento.
+										Los eventos se crean como <span class="font-semibold text-foreground">borrador</span>; solo se requieren
+										título y descripción. Completa los datos pendientes (horas AFC, staff, políticas) desde Eventos antes de
+										publicarlos.
 									</div>
 								</div>
 								<div class="flex items-center gap-3">
@@ -1187,7 +1149,7 @@
 										class="text-sm font-semibold text-blue-600 hover:text-blue-700"
 										onclick={downloadCsvTemplate}
 									>
-										Descargar template
+										Descargar ejemplo CSV
 									</button>
 								</div>
 							</div>
@@ -1205,7 +1167,8 @@
 								<div class="min-w-0">
 									<div class="text-sm font-semibold">Toca para subir CSV</div>
 									<div class="mt-1 text-xs text-muted-foreground">
-										Usa la plantilla para incluir todos los datos obligatorios y opcionales.
+										Columnas: titulo, descripcion, categoria, fecha_inicio (AAAA-MM-DD), hora_inicio (HH:MM), fecha_fin,
+										hora_fin, ubicacion, organizador, cupo, url_imagen. Solo título y descripción son obligatorios.
 									</div>
 								</div>
 								<div class="flex items-center gap-2">
@@ -1222,7 +1185,7 @@
 										<div class="min-w-0">
 											<div class="truncate text-sm font-semibold">{bulk.file.name}</div>
 											<div class="mt-1 text-xs text-muted-foreground">
-												Válidos: <span class="font-semibold">{bulk.rows.length}</span> • Errores:{' '}
+												Válidos: <span class="font-semibold">{bulk.rows.length - new Set(bulk.errors.map((err) => err.index)).size}</span> • Errores:{' '}
 												<span class="font-semibold">{bulk.errors.length}</span>
 											</div>
 										</div>
@@ -1252,7 +1215,6 @@
 							{/if}
 					</CardContent>
 					</Card>
-					-->
 
 					<!-- Manual form: solo si NO está en modo CSV -->
 					{#if !bulk.mode}
@@ -1289,14 +1251,19 @@
 									</div>
 
 									<div>
-										<Label for="create-event-description" class="text-sm font-semibold text-blue-600">Descripción</Label>
+										<Label for="create-event-description" class={`text-sm font-semibold ${fieldErrors.description ? 'text-red-600' : 'text-blue-600'}`}>Descripción</Label>
 										<Textarea
 											id="create-event-description"
 											name="description"
 											class="mt-2 min-h-[120px] rounded-2xl"
 											placeholder="Describe los objetivos y detalles del evento…"
 											bind:value={form.description}
+											onblur={() => validateManualField('description')}
 										/>
+										{#if fieldErrors.description}<div class="mt-1 text-xs text-red-600">{fieldErrors.description}</div>{/if}
+										<div class="mt-1 text-xs text-muted-foreground">
+											Para guardar como borrador basta con título y descripción; para publicar se requieren todos los datos.
+										</div>
 									</div>
 								</div>
 							</CardContent>
@@ -1604,23 +1571,26 @@
 											placeholder="https://ejemplo.com/portada.jpg"
 											bind:value={form.coverImageUrl}
 										/>
+										<p class="mt-1 text-xs text-muted-foreground">{EVENT_COVER_HINT}</p>
 									</div>
 
 									{#if form.coverImageUrl && !normalizedCoverImageUrl}
 										<div class="text-xs font-semibold text-red-600">Ingresa una URL válida (http/https).</div>
 									{:else if normalizedCoverImageUrl}
 										<div class="rounded-2xl border p-3">
-											{#if coverPreviewFailed}
-												<div class="py-6 text-center text-xs font-semibold text-red-600">No se pudo cargar la imagen con esa URL.</div>
-											{:else}
-												<img
-													src={normalizedCoverImageUrl}
-													alt="Preview portada"
-													class="h-44 w-full rounded-xl object-cover"
-													onerror={() => (coverPreviewFailed = true)}
-													onload={() => (coverPreviewFailed = false)}
-												/>
-											{/if}
+											<div class="mx-auto flex aspect-[2/1] w-full max-w-md items-center justify-center overflow-hidden rounded-xl bg-slate-100">
+												{#if coverPreviewFailed}
+													<div class="px-4 text-center text-xs font-semibold text-red-600">No se pudo cargar la imagen con esa URL.</div>
+												{:else}
+													<img
+														src={normalizedCoverImageUrl}
+														alt="Preview portada"
+														class="h-full w-full object-cover"
+														onerror={() => (coverPreviewFailed = true)}
+														onload={() => (coverPreviewFailed = false)}
+													/>
+												{/if}
+											</div>
 										</div>
 									{/if}
 								</div>
@@ -1665,7 +1635,7 @@
 									<div>
 										<div class="text-sm font-semibold text-blue-600">Eventos desde CSV</div>
 										<div class="mt-1 text-sm text-muted-foreground">
-											Se crearán <span class="font-semibold text-foreground">{bulk.rows.length}</span> eventos.
+											Se crearán <span class="font-semibold text-foreground">{bulk.rows.length}</span> eventos como borrador, con datos pendientes.
 										</div>
 									</div>
 									<Badge class="rounded-full bg-blue-50 text-blue-700 hover:bg-blue-50">Bulk</Badge>
@@ -1675,7 +1645,9 @@
 									{#each bulk.rows.slice(0, 5) as ev, idx}
 										<div class="rounded-2xl bg-slate-50 p-4">
 											<div class="text-sm font-extrabold text-foreground">{idx + 1}. {ev.title}</div>
-											<div class="mt-1 text-xs text-muted-foreground">{ev.date} {ev.time} • {ev.location}</div>
+											<div class="mt-1 text-xs text-muted-foreground">
+												{ev.date ? `${ev.date} ${ev.time}` : 'Sin fecha'} • {ev.location || 'Sin ubicación'}
+											</div>
 											<div class="mt-1 text-xs text-muted-foreground">Organizador: {ev.organizer || '—'}</div>
 											<div class="mt-2 flex flex-wrap gap-2">
 														<Badge class={`rounded-full ${getPreviewCategoryClass(ev.category)}`}>
@@ -1710,19 +1682,21 @@
 										<div class="text-xs text-muted-foreground">Imagen de portada</div>
 										<div class="mt-2">
 											{#if normalizedCoverImageUrl}
-												{#if coverPreviewFailed}
-													<div class="py-6 text-center text-xs font-semibold text-red-600">
-														No se pudo cargar la imagen con esa URL.
-													</div>
-												{:else}
-													<img
-														src={normalizedCoverImageUrl}
-														alt="Preview portada"
-														class="h-44 w-full rounded-xl object-cover"
-														onerror={() => (coverPreviewFailed = true)}
-														onload={() => (coverPreviewFailed = false)}
-													/>
-												{/if}
+												<div class="mx-auto flex aspect-[2/1] w-full max-w-md items-center justify-center overflow-hidden rounded-xl bg-slate-100">
+													{#if coverPreviewFailed}
+														<div class="px-4 text-center text-xs font-semibold text-red-600">
+															No se pudo cargar la imagen con esa URL.
+														</div>
+													{:else}
+														<img
+															src={normalizedCoverImageUrl}
+															alt="Preview portada"
+															class="h-full w-full object-cover"
+															onerror={() => (coverPreviewFailed = true)}
+															onload={() => (coverPreviewFailed = false)}
+														/>
+													{/if}
+												</div>
 											{:else}
 												<div class="text-sm text-muted-foreground">Sin imagen configurada.</div>
 											{/if}

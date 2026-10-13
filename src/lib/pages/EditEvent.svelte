@@ -4,6 +4,7 @@
 	import { page } from '$app/stores';
 	import { toast } from 'svelte-sonner';
 	import { adminEventsApi } from '$lib/services/api';
+	import { EVENT_COVER_HINT } from '$lib/utils/events.js';
 	import {
 		EVENT_STATUS_CATALOG,
 		EVENT_REGISTRATION_MODE_CATALOG,
@@ -209,9 +210,9 @@
 	}
 
 	function validatePayload(payload) {
-		if (hasAttendance) {
-			if (!payload.title) return 'El título es obligatorio.';
-		} else {
+		if (!payload.title) return 'El título es obligatorio.';
+		if (!payload.description) return 'La descripción es obligatoria.';
+		if (!hasAttendance) {
 			const scheduleError = validateSchedule(payload);
 			if (scheduleError) return scheduleError;
 		}
@@ -227,10 +228,13 @@
 	}
 
 	function validateSchedule(payload) {
-		if (!payload.title || !payload.starts_at || !payload.ends_at) {
-			return 'Título, inicio y fin son obligatorios.';
+		if (payload.status === 'published' && (!payload.starts_at || !payload.ends_at)) {
+			return 'Para publicar, captura inicio y fin del evento.';
 		}
-		if (new Date(payload.ends_at) <= new Date(payload.starts_at)) {
+		if (Boolean(payload.starts_at) !== Boolean(payload.ends_at)) {
+			return 'Captura el inicio y también el fin del evento.';
+		}
+		if (payload.starts_at && new Date(payload.ends_at) <= new Date(payload.starts_at)) {
 			return 'La fecha/hora de fin debe ser mayor a la de inicio.';
 		}
 		const afcValidation = validateAfcForSave(afcState, {
@@ -345,6 +349,7 @@
 					placeholder="https://ejemplo.com/portada.jpg"
 					bind:value={form.coverImageUrl}
 				/>
+				<p class="mt-1 text-xs text-muted-foreground">{EVENT_COVER_HINT}</p>
 				{#if form.coverImageUrl && !normalizedCoverImageUrl}
 					<div class="mt-1 text-xs font-semibold text-red-600">Ingresa una URL válida (http/https).</div>
 				{/if}
@@ -352,17 +357,19 @@
 
 			{#if normalizedCoverImageUrl}
 				<div class="rounded-2xl border p-3">
-					{#if coverPreviewFailed}
-						<div class="py-6 text-center text-xs font-semibold text-red-600">No se pudo cargar la imagen con esa URL.</div>
-					{:else}
-						<img
-							src={normalizedCoverImageUrl}
-							alt="Preview portada"
-							class="h-44 w-full rounded-xl object-cover"
-							onerror={() => (coverPreviewFailed = true)}
-							onload={() => (coverPreviewFailed = false)}
-						/>
-					{/if}
+					<div class="mx-auto flex aspect-[2/1] w-full max-w-md items-center justify-center overflow-hidden rounded-xl bg-slate-100">
+						{#if coverPreviewFailed}
+							<div class="px-4 text-center text-xs font-semibold text-red-600">No se pudo cargar la imagen con esa URL.</div>
+						{:else}
+							<img
+								src={normalizedCoverImageUrl}
+								alt="Preview portada"
+								class="h-full w-full object-cover"
+								onerror={() => (coverPreviewFailed = true)}
+								onload={() => (coverPreviewFailed = false)}
+							/>
+						{/if}
+					</div>
 				</div>
 			{/if}
 

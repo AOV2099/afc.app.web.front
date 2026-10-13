@@ -33,11 +33,11 @@
             <img
               src={event.coverImageUrl}
               alt={event.title}
-              class="h-44 w-full object-cover sm:h-48"
+              class="aspect-[2/1] w-full object-cover"
               loading="lazy"
             />
           {:else}
-            <div class="h-44 w-full bg-muted sm:h-48"></div>
+            <div class="aspect-[2/1] w-full bg-muted"></div>
           {/if}
 
           {#if event.creditsLabel}
