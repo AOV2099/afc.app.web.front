@@ -1051,7 +1051,7 @@
                 </button>
                 <div class="mt-0.5 truncate text-xs text-muted-foreground">
                   {eventCategory(ev)} · {eventOrganizer(ev)}
-                  {#if isCareerRestricted(ev)}· Otra carrera{/if}
+                  {#if isCareerRestricted(ev) && ev.owner_career_name}· {ev.owner_career_name}{/if}
                 </div>
               </td>
               <td class="whitespace-nowrap px-3 py-3">{formatDate(ev.starts_at)}</td>
@@ -1127,9 +1127,9 @@
             >
           </div>
 
-          {#if isCareerRestricted(ev)}
+          {#if isCareerRestricted(ev) && ev.owner_career_name}
             <Badge class="rounded-full bg-slate-700 text-white hover:bg-slate-700">
-              Otra carrera{ev.owner_career_name ? ` · ${ev.owner_career_name}` : ""}
+              {ev.owner_career_name}
             </Badge>
           {/if}
 

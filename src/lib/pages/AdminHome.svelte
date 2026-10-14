@@ -79,10 +79,13 @@
 			hasCapacity ? availableSpots : 'Sin límite'
 		}`;
 
+		const isCareerRestricted = e?.can_manage === false;
+		const ownerCareerName = isCareerRestricted ? e?.owner_career_name || '' : '';
+
 		return {
 			id: String(e?.id || e?.event_id || Math.random()),
 			isPast: isPastEvent(e),
-			isCareerRestricted: e?.can_manage === false,
+			isCareerRestricted,
 			dateMonth: isValidStart
 				? startsAt.toLocaleString('es-MX', { month: 'short' }).toUpperCase()
 				: '---',
@@ -93,8 +96,8 @@
 					? `${startsAt.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })} - ${endsAt.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}`
 					: 'Sin horario',
 			availabilityLabel,
-			metaRightTop: catalogLabel(EVENT_STATUS_CATALOG, e?.status),
-			metaRightBottom: 'Estado'
+			metaRightTop: ownerCareerName || catalogLabel(EVENT_STATUS_CATALOG, e?.status),
+			metaRightBottom: ownerCareerName ? 'Carrera' : 'Estado'
 		};
 	});
 
@@ -431,7 +434,7 @@
 
 								<div class="text-right">
 									<div class="text-[14px] font-extrabold text-blue-600">
-										{e.isCareerRestricted ? 'Otra carrera' : e.metaRightTop}
+										{e.metaRightTop}
 									</div>
 									<div class="text-[12px] font-semibold text-slate-500">{e.metaRightBottom}</div>
 								</div>
