@@ -35,6 +35,7 @@
     computeAfcPreview,
     createAfcState,
     describeAfcEventHours,
+    eventGrantsAfcHours,
     validateAfcForSave,
   } from "$lib/utils/afcHoursForm.js";
   import { CalendarDays, LayoutGrid, List, MapPin, Plus, User } from "lucide-svelte";
@@ -64,6 +65,7 @@
   let editOriginalStaffUserId = "";
   let editSelectedStaffUserId = "";
   let editAfcState = createAfcState();
+  let editAfcHoursEnabled = true;
   let editAfcEvent = null;
   let editAfcError = "";
   let editHasAttendance = false;
@@ -92,6 +94,7 @@
   let bulkDialogOpen = false;
   let bulkAfcEnabled = false;
   let bulkAfcState = createAfcState();
+  let bulkAfcHoursEnabled = true;
   let bulkFormError = "";
   let bulkApplying = false;
   let bulkErrors = [];
@@ -278,6 +281,7 @@
     bulkChanges = { ...EMPTY_BULK_CHANGES };
     bulkAfcEnabled = false;
     bulkAfcState = createAfcState();
+    bulkAfcHoursEnabled = true;
     bulkFormError = "";
     bulkDialogOpen = true;
   }
@@ -291,7 +295,7 @@
       const capacity = Number(bulkChanges.capacity);
       if (!Number.isInteger(capacity) || capacity <= 0) return "El cupo debe ser un número entero mayor a 0.";
     }
-    if (bulkAfcEnabled) {
+    if (bulkAfcEnabled && bulkAfcHoursEnabled) {
       const today = new Date().toISOString().slice(0, 10);
       const preview = computeAfcPreview(bulkAfcState, { catalog: $afcCatalog.types, defaultDate: today });
       if (preview.isCommittee) {
@@ -322,7 +326,9 @@
       payload.capacity_enabled = true;
       payload.capacity = Number(bulkChanges.capacity);
     }
-    if (bulkAfcEnabled) {
+    if (bulkAfcEnabled && !bulkAfcHoursEnabled) {
+      payload.afc_hours_enabled = false;
+    } else if (bulkAfcEnabled) {
       // La fecha de cada evento se usa para los cursos de una sola jornada; la evidencia va evento por evento.
       const afcValuation = buildAfcValuationPayload(bulkAfcState, {
         catalog: $afcCatalog.types,
@@ -509,6 +515,7 @@
     editSelectedStaffUserId = editOriginalStaffUserId;
     editAfcEvent = ev;
     editAfcState = afcStateFromEvent(ev);
+    editAfcHoursEnabled = eventGrantsAfcHours(ev);
     editAfcError = "";
     editHasAttendance = Boolean(ev?.has_attendance);
   }
@@ -640,12 +647,13 @@
   function buildUpdatePayload() {
     const startsAt = localDatetimeToIso(editForm.startsAt);
     const endsAt = localDatetimeToIso(editForm.endsAt);
-    const afcValuation = editHasAttendance
-      ? null
-      : buildAfcValuationPayload(editAfcState, {
-          catalog: $afcCatalog.types,
-          defaultDate: String(editForm.startsAt || "").slice(0, 10),
-        });
+    const afcValuation =
+      editHasAttendance || !editAfcHoursEnabled
+        ? null
+        : buildAfcValuationPayload(editAfcState, {
+            catalog: $afcCatalog.types,
+            defaultDate: String(editForm.startsAt || "").slice(0, 10),
+          });
     const cancelDeadline =
       editForm.cancelPolicy === "free_until_deadline"
         ? toIsoFromDateTime(
@@ -662,6 +670,7 @@
       organizer: editForm.organizer?.trim() || null,
       ...(editHasAttendance ? {} : { starts_at: startsAt, ends_at: endsAt }),
       ...(afcValuation ? { afc_valuation: afcValuation } : {}),
+      ...(!editHasAttendance && !editAfcHoursEnabled ? { afc_hours_enabled: false } : {}),
       capacity_enabled: Boolean(editForm.capacityEnabled),
       capacity: editForm.capacityEnabled
         ? editForm.cupo === ""
@@ -753,11 +762,15 @@
     if (payload.ends_at && new Date(payload.ends_at).getTime() < Date.now()) {
       return "La fecha/hora de fin no puede estar en el pasado.";
     }
+    if (!editAfcHoursEnabled) {
+      editAfcError = "";
+      return "";
+    }
     const afcValidation = validateAfcForSave(editAfcState, {
       catalog: $afcCatalog.types,
       status: payload.status,
       defaultDate: String(editForm.startsAt || "").slice(0, 10),
-      legacyHours: editAfcEvent?.afc_valuation ? null : editAfcEvent?.hours_value ?? null,
+      legacyHours: editLegacyAfcHours,
     });
     editAfcError = afcValidation.ok ? "" : afcValidation.message;
     return afcValidation.ok ? "" : afcValidation.message;
@@ -766,6 +779,9 @@
   $: lockedStatusValues = editHasAttendance
     ? ["draft", "published"].filter((value) => value !== editAfcEvent?.status)
     : [];
+  // Un evento guardado sin horas AFC (0 hrs) no tiene horas previas que conservar al reactivarlas.
+  $: editLegacyAfcHours =
+    editAfcEvent?.afc_valuation || !eventGrantsAfcHours(editAfcEvent) ? null : editAfcEvent?.hours_value ?? null;
 
   $: {
     const nextUrl = String(editForm.coverImageUrl || "").trim();
@@ -1379,13 +1395,14 @@
             <div class="text-sm font-semibold text-slate-700">Horas AFC</div>
             <AfcHoursSection
               bind:state={editAfcState}
+              bind:enabled={editAfcHoursEnabled}
               catalog={$afcCatalog.types}
               catalogStatus={$afcCatalog.status === "idle" ? "loading" : $afcCatalog.status}
               catalogError={$afcCatalog.error}
               idPrefix="edit-event-afc"
               defaultDate={String(editForm.startsAt || "").slice(0, 10)}
               eventId={selectedEventId}
-              legacyHours={editAfcEvent?.afc_valuation ? null : editAfcEvent?.hours_value ?? null}
+              legacyHours={editLegacyAfcHours}
               error={editAfcError}
               disabled={editHasAttendance}
             />
@@ -1720,6 +1737,7 @@
         {#if bulkAfcEnabled}
           <AfcHoursSection
             bind:state={bulkAfcState}
+            bind:enabled={bulkAfcHoursEnabled}
             catalog={$afcCatalog.types}
             catalogStatus={$afcCatalog.status === "idle" ? "loading" : $afcCatalog.status}
             catalogError={$afcCatalog.error}

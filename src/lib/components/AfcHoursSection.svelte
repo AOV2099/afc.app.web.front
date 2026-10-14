@@ -28,6 +28,7 @@
 	export let legacyHours = null;
 	export let error = '';
 	export let disabled = false;
+	export let enabled = true;
 
 	let fileInputEl;
 	let uploadStatus = 'idle';
@@ -129,6 +130,22 @@
 </script>
 
 <div class="space-y-4" data-testid="afc-hours-section">
+	<label for={`${idPrefix}-enabled`} class="flex cursor-pointer items-start gap-3 rounded-2xl border bg-slate-50 px-4 py-3">
+		<input
+			id={`${idPrefix}-enabled`}
+			name="afc_hours_enabled"
+			type="checkbox"
+			class="mt-0.5 h-4 w-4 accent-blue-600"
+			bind:checked={enabled}
+			{disabled}
+		/>
+		<span>
+			<span class="block text-sm font-semibold">Se consideran horas AFC</span>
+			<span class="block text-xs text-muted-foreground">Desmárcalo si el evento no otorga horas AFC; se registrará con 0 hrs.</span>
+		</span>
+	</label>
+
+	{#if enabled}
 	{#if catalogStatus === 'loading'}
 		<div class="text-xs text-muted-foreground">Cargando catálogo AFC…</div>
 	{:else if catalogStatus === 'error'}
@@ -408,6 +425,11 @@
 			{/if}
 		{/if}
 	</div>
+	{:else}
+		<div class="rounded-2xl border bg-white px-4 py-3 text-sm" data-testid="afc-hours-summary">
+			Horas AFC asignadas: <span class="font-semibold">0</span> (el evento no otorga horas AFC)
+		</div>
+	{/if}
 
 	{#if error}
 		<div class="text-xs font-semibold text-red-600">{error}</div>

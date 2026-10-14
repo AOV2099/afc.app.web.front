@@ -273,7 +273,7 @@
 			title: event?.title || 'Evento sin título',
 			date: startsLabel,
 			img: resolveEventImage(event),
-			credits: event?.hours_value ? `${event.hours_value} Hrs.` : null,
+			credits: Number(event?.hours_value) > 0 ? `${event.hours_value} Hrs.` : null,
 			place: event?.location || event?.attributes?.location || 'Sin ubicación',
 			organizer: event?.organizer || event?.attributes?.organizer || 'Sin organizador',
 			description: event?.description || '',

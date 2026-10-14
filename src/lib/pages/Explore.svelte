@@ -96,7 +96,7 @@
       title: event?.title || 'Sin título',
       date: startsLabel,
       img: resolveEventImage(event),
-      credits: event?.hours_value ? `${event.hours_value} Hrs.` : null,
+      credits: Number(event?.hours_value) > 0 ? `${event.hours_value} Hrs.` : null,
       category: categoryMeta.label.toUpperCase(),
       place: location,
       organizer,

@@ -187,3 +187,10 @@ export function describeAfcEventHours(event) {
 	if (event?.hours_value === null) return 'Horas pendientes';
 	return '';
 }
+
+/** Un evento sin valoración AFC y con 0 hrs se guardó como "no otorga horas AFC". */
+export function eventGrantsAfcHours(event) {
+	if (!event || event.afc_valuation) return true;
+	if (event.hours_value === null || event.hours_value === undefined || event.hours_value === '') return true;
+	return Number(event.hours_value) !== 0;
+}

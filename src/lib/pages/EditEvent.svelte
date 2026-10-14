@@ -28,6 +28,7 @@
 		afcStateFromEvent,
 		buildAfcValuationPayload,
 		createAfcState,
+		eventGrantsAfcHours,
 		validateAfcForSave
 	} from '$lib/utils/afcHoursForm.js';
 
@@ -43,6 +44,7 @@
 	let submitting = false;
 	let loadError = '';
 	let afcState = createAfcState();
+	let afcHoursEnabled = true;
 	let afcEvent = null;
 	let afcError = '';
 	let hasAttendance = false;
@@ -151,6 +153,7 @@
 		};
 		afcEvent = ev;
 		afcState = afcStateFromEvent(ev);
+		afcHoursEnabled = eventGrantsAfcHours(ev);
 		afcError = '';
 		hasAttendance = Boolean(ev?.has_attendance);
 	}
@@ -170,18 +173,20 @@
 	function buildPayload() {
 		const startsAtIso = localDatetimeToIso(form.startsAt);
 		const endsAtIso = localDatetimeToIso(form.endsAt);
-		const afcValuation = hasAttendance
-			? null
-			: buildAfcValuationPayload(afcState, {
-					catalog: $afcCatalog.types,
-					defaultDate: String(form.startsAt || '').slice(0, 10)
-				});
+		const afcValuation =
+			hasAttendance || !afcHoursEnabled
+				? null
+				: buildAfcValuationPayload(afcState, {
+						catalog: $afcCatalog.types,
+						defaultDate: String(form.startsAt || '').slice(0, 10)
+					});
 		return {
 			title: form.title?.trim(),
 			description: form.description?.trim() || null,
 			category: form.category,
 			...(hasAttendance ? {} : { starts_at: startsAtIso, ends_at: endsAtIso }),
 			...(afcValuation ? { afc_valuation: afcValuation } : {}),
+			...(!hasAttendance && !afcHoursEnabled ? { afc_hours_enabled: false } : {}),
 			capacity_enabled: Boolean(form.capacityEnabled),
 			capacity: form.capacityEnabled ? (form.cupo === '' ? null : Number(form.cupo)) : null,
 			status: form.status,
@@ -237,11 +242,15 @@
 		if (payload.starts_at && new Date(payload.ends_at) <= new Date(payload.starts_at)) {
 			return 'La fecha/hora de fin debe ser mayor a la de inicio.';
 		}
+		if (!afcHoursEnabled) {
+			afcError = '';
+			return '';
+		}
 		const afcValidation = validateAfcForSave(afcState, {
 			catalog: $afcCatalog.types,
 			status: payload.status,
 			defaultDate: String(form.startsAt || '').slice(0, 10),
-			legacyHours: afcEvent?.afc_valuation ? null : (afcEvent?.hours_value ?? null)
+			legacyHours: legacyAfcHours
 		});
 		afcError = afcValidation.message;
 		return afcValidation.ok ? '' : afcValidation.message;
@@ -250,6 +259,9 @@
 	$: lockedStatusValues = hasAttendance
 		? ['draft', 'published'].filter((value) => value !== afcEvent?.status)
 		: [];
+	// Un evento guardado sin horas AFC (0 hrs) no tiene horas previas que conservar al reactivarlas.
+	$: legacyAfcHours =
+		afcEvent?.afc_valuation || !eventGrantsAfcHours(afcEvent) ? null : (afcEvent?.hours_value ?? null);
 
 	$: {
 		const nextUrl = String(form.coverImageUrl || '').trim();
@@ -396,13 +408,14 @@
 				<div class="text-sm font-semibold text-blue-600">Horas AFC</div>
 				<AfcHoursSection
 					bind:state={afcState}
+					bind:enabled={afcHoursEnabled}
 					catalog={$afcCatalog.types}
 					catalogStatus={$afcCatalog.status === 'idle' ? 'loading' : $afcCatalog.status}
 					catalogError={$afcCatalog.error}
 					idPrefix="edit-page-afc"
 					defaultDate={String(form.startsAt || '').slice(0, 10)}
 					{eventId}
-					legacyHours={afcEvent?.afc_valuation ? null : (afcEvent?.hours_value ?? null)}
+					legacyHours={legacyAfcHours}
 					error={afcError}
 					disabled={hasAttendance}
 				/>

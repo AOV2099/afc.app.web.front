@@ -66,6 +66,7 @@
 	let bulkErrorsDialogOpen = false;
 	let bulkValidationErrors = [];
 	let afcState = createAfcState();
+	let afcHoursEnabled = true;
 	const MAX_EVENT_HOURS = 100;
 	const minimumEventDate = (() => {
 		const now = new Date();
@@ -150,6 +151,7 @@
 		staffAssignmentMode = 'existing';
 		selectedStaffUserId = '';
 		afcState = createAfcState();
+		afcHoursEnabled = true;
 		form = {
 			title: '',
 			category: 'general',
@@ -501,7 +503,10 @@
 			organizer: form.organizer?.trim() || null,
 			starts_at: startsAt,
 			ends_at: endsAt,
-			afc_valuation: buildAfcValuationPayload(afcState, { catalog: $afcCatalog.types, defaultDate: form.date }),
+			afc_valuation: afcHoursEnabled
+				? buildAfcValuationPayload(afcState, { catalog: $afcCatalog.types, defaultDate: form.date })
+				: null,
+			...(afcHoursEnabled ? {} : { afc_hours_enabled: false, hours_value: 0 }),
 			capacity_enabled: Boolean(form.capacityEnabled),
 			capacity: form.capacityEnabled ? (form.cupo === '' ? null : Number(form.cupo)) : null,
 			status: form.status,
@@ -632,12 +637,14 @@
 			errors.endDate = 'No puede estar en el pasado';
 			errors.endTime = 'No puede estar en el pasado';
 		}
-		const afcValidation = validateAfcForSave(afcState, {
-			catalog: $afcCatalog.types,
-			status: form.status,
-			defaultDate: form.date
-		});
-		if (!afcValidation.ok) errors.afc = afcValidation.message;
+		if (afcHoursEnabled) {
+			const afcValidation = validateAfcForSave(afcState, {
+				catalog: $afcCatalog.types,
+				status: form.status,
+				defaultDate: form.date
+			});
+			if (!afcValidation.ok) errors.afc = afcValidation.message;
+		}
 
 		if (getCancelPolicyMeta(form.cancelPolicy).requiresDeadline) {
 			if (!form.cancelDeadlineDate) errors.cancelDeadlineDate = 'Campo obligatorio';
@@ -1069,7 +1076,8 @@
 	$: afcPreview = computeAfcPreview(afcState, { catalog: $afcCatalog.types, defaultDate: form.date });
 	$: if (
 		fieldErrors.afc &&
-		validateAfcForSave(afcState, { catalog: $afcCatalog.types, status: form.status, defaultDate: form.date }).ok
+		(!afcHoursEnabled ||
+			validateAfcForSave(afcState, { catalog: $afcCatalog.types, status: form.status, defaultDate: form.date }).ok)
 	) {
 		fieldErrors = { ...fieldErrors, afc: undefined };
 	}
@@ -1274,6 +1282,7 @@
 							<CardContent class="p-5">
 								<AfcHoursSection
 									bind:state={afcState}
+									bind:enabled={afcHoursEnabled}
 									catalog={$afcCatalog.types}
 									catalogStatus={$afcCatalog.status === 'idle' ? 'loading' : $afcCatalog.status}
 									catalogError={$afcCatalog.error}
@@ -1463,7 +1472,7 @@
 												<option value={status.value}>{status.label}</option>
 											{/each}
 										</select>
-										{#if afcPreview.status === 'incomplete'}
+										{#if afcHoursEnabled && afcPreview.status === 'incomplete'}
 											<div class="mt-1 text-xs text-amber-700">Sin horas AFC completas, el evento debe guardarse como borrador.</div>
 										{/if}
 									</div>
@@ -1766,6 +1775,10 @@
 
 								<div class="mt-3 rounded-2xl bg-slate-50 p-3">
 									<div class="text-xs text-muted-foreground">Horas AFC</div>
+									{#if !afcHoursEnabled}
+										<div class="mt-1 text-sm font-semibold">No se consideran horas AFC</div>
+										<div class="mt-1 text-sm">Horas AFC asignadas: 0</div>
+									{:else}
 									<div class="mt-1 text-sm font-semibold">
 										{afcPreview.type?.name || 'Sin tipo de actividad'}{afcPreview.scenario ? ` · ${afcPreview.scenario.label}` : ''}
 									</div>
@@ -1778,6 +1791,7 @@
 											Horas pendientes de captura
 										{/if}
 									</div>
+									{/if}
 								</div>
 
 								<div class="mt-3 rounded-2xl bg-slate-50 p-3">
