@@ -5,8 +5,13 @@
   import { adminEventsApi, adminStaffUsersApi } from "$lib/services/api";
   import {
     EVENT_CANCEL_POLICY_CATALOG,
+    EVENT_CANCEL_POLICY_HELP,
+    EVENT_CANCEL_POLICY_OPTIONS,
     EVENT_REGISTRATION_MODE_CATALOG,
-    EVENT_RESUBMISSION_POLICY_CATALOG,
+    EVENT_REGISTRATION_MODE_HELP,
+    EVENT_REAPPLY_HELP,
+    EVENT_REAPPLY_OPTIONS,
+    normalizeReapplyPolicy,
     EVENT_STATUS_CATALOG,
     catalogLabel,
   } from "../../routes/store";
@@ -28,6 +33,7 @@
   import { Switch } from "$lib/components/ui/switch";
   import * as Dialog from "$lib/components/ui/dialog";
   import AfcHoursSection from "$lib/components/AfcHoursSection.svelte";
+  import PolicyHelpTooltip from "$lib/components/PolicyHelpTooltip.svelte";
   import { afcCatalog, ensureAfcCatalog } from "$lib/stores/afcCatalog.js";
   import {
     afcStateFromEvent,
@@ -84,9 +90,9 @@
   };
   const BULK_STATUS_OPTIONS = ["draft", "published", "cancelled"].map((value) => EVENT_STATUS_CATALOG[value]);
   const REGISTRATION_MODE_OPTIONS = Object.values(EVENT_REGISTRATION_MODE_CATALOG);
-  const RESUBMISSION_POLICY_OPTIONS = Object.values(EVENT_RESUBMISSION_POLICY_CATALOG);
   // Las políticas con fecha límite se capturan evento por evento.
-  const BULK_CANCEL_POLICY_OPTIONS = Object.values(EVENT_CANCEL_POLICY_CATALOG).filter((option) => !option.requiresDeadline);
+  const BULK_CANCEL_POLICY_OPTIONS = EVENT_CANCEL_POLICY_OPTIONS.filter((option) => !option.requiresDeadline);
+  const CANCEL_POLICY_HELP_OPTIONS = EVENT_CANCEL_POLICY_OPTIONS;
 
   let viewMode = "cards";
   let selectedIds = [];
@@ -126,7 +132,7 @@
     endsAt: "",
     status: "draft",
     registrationMode: "auto",
-    resubmissionPolicy: "only_changes_requested",
+    resubmissionPolicy: "not_allowed",
     allowSelfCheckin: true,
     geoEnforced: false,
     cancelPolicy: "free_cancel",
@@ -275,6 +281,9 @@
   $: hasBulkChanges =
     bulkAfcEnabled ||
     Object.entries(bulkChanges).some(([key, value]) => key !== "capacity" && String(value).trim() !== "");
+  $: if (bulkChanges.registration_mode === "auto" && bulkChanges.resubmission_policy) {
+    bulkChanges = { ...bulkChanges, resubmission_policy: "" };
+  }
 
   function openBulkDialog() {
     if (!selectedIds.length) return;
@@ -313,8 +322,11 @@
 
   function buildBulkPayload(ev) {
     const payload = {};
-    for (const key of ["status", "category", "registration_mode", "resubmission_policy", "cancel_policy"]) {
+    for (const key of ["status", "category", "registration_mode", "cancel_policy"]) {
       if (bulkChanges[key]) payload[key] = bulkChanges[key];
+    }
+    if (bulkChanges.resubmission_policy && bulkChanges.registration_mode !== "auto") {
+      payload.resubmission_policy = bulkChanges.resubmission_policy;
     }
     if (payload.cancel_policy) payload.cancel_deadline = null;
     if (bulkChanges.location.trim()) payload.location = bulkChanges.location.trim();
@@ -494,7 +506,7 @@
       endsAt: isoToLocalDatetime(ev.ends_at),
       status: ev.status || "draft",
       registrationMode: ev.registration_mode || "auto",
-      resubmissionPolicy: ev.resubmission_policy || "only_changes_requested",
+      resubmissionPolicy: normalizeReapplyPolicy(ev.resubmission_policy),
       allowSelfCheckin: Boolean(ev.allow_self_checkin),
       // Geocerca deshabilitada temporalmente; restaurar: geoEnforced: Boolean(ev.geo_enforced),
       geoEnforced: false,
@@ -1018,7 +1030,6 @@
             <th class="px-3 py-3">Inicio</th>
             <th class="px-3 py-3">Estatus</th>
             <th class="px-3 py-3">Registro</th>
-            <th class="px-3 py-3">Reenvío</th>
             <th class="px-3 py-3">Cancelación</th>
             <th class="px-3 py-3">Staff</th>
             <th class="px-3 py-3">Datos</th>
@@ -1061,7 +1072,6 @@
                 </Badge>
               </td>
               <td class="px-3 py-3">{catalogLabel(EVENT_REGISTRATION_MODE_CATALOG, ev.registration_mode)}</td>
-              <td class="px-3 py-3">{catalogLabel(EVENT_RESUBMISSION_POLICY_CATALOG, ev.resubmission_policy)}</td>
               <td class="px-3 py-3">
                 {ev.cancel_policy === "free_cancel" && ev.cancel_deadline
                   ? catalogLabel(EVENT_CANCEL_POLICY_CATALOG, "free_until_deadline")
@@ -1450,7 +1460,10 @@
           </div>
 
           <div class="space-y-2">
-            <Label for="edit-event-registration-mode">Modo de registro</Label>
+            <div class="flex items-center gap-1.5">
+              <Label for="edit-event-registration-mode">Modo de registro</Label>
+              <PolicyHelpTooltip title="Modo de registro" intro={EVENT_REGISTRATION_MODE_HELP} options={REGISTRATION_MODE_OPTIONS} />
+            </div>
             <select
               id="edit-event-registration-mode"
               name="registration_mode"
@@ -1462,24 +1475,30 @@
             </select>
           </div>
 
-          <div class="space-y-2">
-            <Label for="edit-event-resubmission-policy">Reenvío de requisitos</Label>
-            <select
-              id="edit-event-resubmission-policy"
-              name="resubmission_policy"
-              class="h-10 w-full rounded-md border px-3"
-              bind:value={editForm.resubmissionPolicy}
-            >
-              <option value="allowed">Permitido</option>
-              <option value="only_changes_requested"
-                >Solo cambios solicitados</option
+          {#if editForm.registrationMode === "manual_review"}
+            <div class="space-y-2">
+              <div class="flex items-center gap-1.5">
+                <Label for="edit-event-reapply">¿Puede volver a solicitar si es rechazado?</Label>
+                <PolicyHelpTooltip title="Volver a solicitar" intro={EVENT_REAPPLY_HELP} options={EVENT_REAPPLY_OPTIONS} />
+              </div>
+              <select
+                id="edit-event-reapply"
+                name="resubmission_policy"
+                class="h-10 w-full rounded-md border px-3"
+                bind:value={editForm.resubmissionPolicy}
               >
-              <option value="not_allowed">No permitido</option>
-            </select>
-          </div>
+                {#each EVENT_REAPPLY_OPTIONS as option (option.value)}
+                  <option value={option.value}>{option.label}</option>
+                {/each}
+              </select>
+            </div>
+          {/if}
 
           <div class="space-y-2">
-            <Label for="edit-event-cancel-policy">Política de cancelación</Label>
+            <div class="flex items-center gap-1.5">
+              <Label for="edit-event-cancel-policy">Política de cancelación</Label>
+              <PolicyHelpTooltip title="Política de cancelación" intro={EVENT_CANCEL_POLICY_HELP} options={CANCEL_POLICY_HELP_OPTIONS} />
+            </div>
             <select
               id="edit-event-cancel-policy"
               name="cancel_policy"
@@ -1491,7 +1510,10 @@
               >
               <option value="free_cancel">Cancelación libre</option>
               <option value="locked">Bloqueada</option>
-              <option value="penalize_no_show">Penalizar inasistencia</option>
+              <!-- "Penalizar inasistencia" oculta hasta definir cómo se aplicará; solo se muestra si el evento ya la tiene. -->
+              {#if editAfcEvent?.cancel_policy === "penalize_no_show"}
+                <option value="penalize_no_show">Penalizar inasistencia</option>
+              {/if}
             </select>
           </div>
 
@@ -1694,7 +1716,10 @@
         <div class="text-sm font-semibold text-slate-700">Registro y políticas</div>
         <div class="grid gap-3 sm:grid-cols-3">
           <div class="space-y-1">
-            <Label for="bulk-registration-mode">Tipo de registro</Label>
+            <div class="flex items-center gap-1.5">
+              <Label for="bulk-registration-mode">Tipo de registro</Label>
+              <PolicyHelpTooltip title="Modo de registro" intro={EVENT_REGISTRATION_MODE_HELP} options={REGISTRATION_MODE_OPTIONS} />
+            </div>
             <select id="bulk-registration-mode" class="h-10 w-full rounded-xl border bg-white px-2 text-sm" bind:value={bulkChanges.registration_mode}>
               <option value="">Sin cambio</option>
               {#each REGISTRATION_MODE_OPTIONS as option (option.value)}
@@ -1702,17 +1727,25 @@
               {/each}
             </select>
           </div>
+          {#if bulkChanges.registration_mode !== "auto"}
+            <div class="space-y-1">
+              <div class="flex items-center gap-1.5">
+                <Label for="bulk-reapply">Volver a solicitar si es rechazado</Label>
+                <PolicyHelpTooltip title="Volver a solicitar" intro={EVENT_REAPPLY_HELP} options={EVENT_REAPPLY_OPTIONS} />
+              </div>
+              <select id="bulk-reapply" class="h-10 w-full rounded-xl border bg-white px-2 text-sm" bind:value={bulkChanges.resubmission_policy}>
+                <option value="">Sin cambio</option>
+                {#each EVENT_REAPPLY_OPTIONS as option (option.value)}
+                  <option value={option.value}>{option.label}</option>
+                {/each}
+              </select>
+            </div>
+          {/if}
           <div class="space-y-1">
-            <Label for="bulk-resubmission">Política de reenvío</Label>
-            <select id="bulk-resubmission" class="h-10 w-full rounded-xl border bg-white px-2 text-sm" bind:value={bulkChanges.resubmission_policy}>
-              <option value="">Sin cambio</option>
-              {#each RESUBMISSION_POLICY_OPTIONS as option (option.value)}
-                <option value={option.value}>{option.label}</option>
-              {/each}
-            </select>
-          </div>
-          <div class="space-y-1">
-            <Label for="bulk-cancel-policy">Política de cancelación</Label>
+            <div class="flex items-center gap-1.5">
+              <Label for="bulk-cancel-policy">Política de cancelación</Label>
+              <PolicyHelpTooltip title="Política de cancelación" intro={EVENT_CANCEL_POLICY_HELP} options={CANCEL_POLICY_HELP_OPTIONS} />
+            </div>
             <select id="bulk-cancel-policy" class="h-10 w-full rounded-xl border bg-white px-2 text-sm" bind:value={bulkChanges.cancel_policy}>
               <option value="">Sin cambio</option>
               {#each BULK_CANCEL_POLICY_OPTIONS as option (option.value)}

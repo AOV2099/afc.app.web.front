@@ -299,7 +299,7 @@
 					<div class="text-sm text-muted-foreground">Sin solicitudes pendientes.</div>
 				{/if}
 				{#each requests as r (r.id)}
-					<Card class={`rounded-3xl border bg-card text-card-foreground shadow-sm ${e.isPast || e.isCareerRestricted ? 'border-slate-300 bg-slate-100 opacity-60 grayscale' : ''}`}>
+					<Card class="rounded-3xl border bg-card text-card-foreground shadow-sm">
 						<CardContent class="p-5">
 							<div class="flex items-start justify-between gap-3">
 								<div class="flex items-center gap-3">
@@ -407,7 +407,7 @@
 					<div class="text-sm text-muted-foreground">No hay eventos para mostrar.</div>
 				{/if}
 				{#each upcomingEvents as e (e.id)}
-					<Card class="rounded-3xl border bg-card text-card-foreground shadow-sm">
+					<Card class={`rounded-3xl border bg-card text-card-foreground shadow-sm ${e.isPast || e.isCareerRestricted ? 'border-slate-300 bg-slate-100 opacity-60 grayscale' : ''}`}>
 						<CardContent class="p-5">
 							<div class="flex items-center gap-4">
 								<div class="flex h-14 w-14 flex-col items-center justify-center rounded-2xl bg-slate-50">

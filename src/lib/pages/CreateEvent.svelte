@@ -7,8 +7,12 @@
  	import {
 		EVENT_STATUS_CATALOG,
 		EVENT_REGISTRATION_MODE_CATALOG,
-		EVENT_RESUBMISSION_POLICY_CATALOG,
-		EVENT_CANCEL_POLICY_CATALOG
+		EVENT_REGISTRATION_MODE_HELP,
+		EVENT_REAPPLY_HELP,
+		EVENT_REAPPLY_OPTIONS,
+		EVENT_CANCEL_POLICY_CATALOG,
+		EVENT_CANCEL_POLICY_HELP,
+		EVENT_CANCEL_POLICY_OPTIONS
 	} from '../../routes/store';
 	import {
 		EVENT_CATEGORY_OPTIONS,
@@ -27,6 +31,7 @@
 	import * as ToggleGroup from '$lib/components/ui/toggle-group';
 	import * as Dialog from '$lib/components/ui/dialog';
 	import AfcHoursSection from '$lib/components/AfcHoursSection.svelte';
+	import PolicyHelpTooltip from '$lib/components/PolicyHelpTooltip.svelte';
 	import { afcCatalog, ensureAfcCatalog } from '$lib/stores/afcCatalog.js';
 	import {
 		buildAfcValuationPayload,
@@ -67,6 +72,7 @@
 	let bulkValidationErrors = [];
 	let afcState = createAfcState();
 	let afcHoursEnabled = true;
+	let creationMode = 'individual';
 	const MAX_EVENT_HOURS = 100;
 	const minimumEventDate = (() => {
 		const now = new Date();
@@ -87,7 +93,7 @@
 		organizer: '',
 		status: 'draft',
 		registrationMode: 'auto',
-		resubmissionPolicy: 'only_changes_requested',
+		resubmissionPolicy: 'not_allowed',
 		allowSelfCheckin: true,
 		geoEnforced: false,
 		geoCenterLat: '',
@@ -123,8 +129,7 @@
 
 	const statusOptions = Object.values(EVENT_STATUS_CATALOG);
 	const registrationModeOptions = Object.values(EVENT_REGISTRATION_MODE_CATALOG);
-	const resubmissionPolicyOptions = Object.values(EVENT_RESUBMISSION_POLICY_CATALOG);
-	const cancelPolicyOptions = Object.values(EVENT_CANCEL_POLICY_CATALOG);
+	const cancelPolicyOptions = EVENT_CANCEL_POLICY_OPTIONS;
 
 	let contentContainerEl;
 
@@ -166,7 +171,7 @@
 			organizer: '',
 			status: 'draft',
 			registrationMode: 'auto',
-			resubmissionPolicy: 'only_changes_requested',
+			resubmissionPolicy: 'not_allowed',
 			allowSelfCheckin: true,
 			geoEnforced: false,
 			geoCenterLat: '',
@@ -379,6 +384,14 @@
 		formError = '';
 	}
 
+	function setCreationMode(mode) {
+		if (mode === creationMode) return;
+		if (mode === 'individual' && bulk.file) cancelCsvMode();
+		creationMode = mode;
+		fieldErrors = {};
+		formError = '';
+	}
+
 	function getCatalogLabel(catalog, key, fallback = key) {
 		return catalog?.[key]?.label || fallback;
 	}
@@ -400,9 +413,13 @@
 	}
 
 	async function toPreview() {
-		if (bulk.mode) {
+		if (creationMode === 'masiva') {
 			fieldErrors = {};
 			formError = '';
+			if (!bulk.file) {
+				formError = 'Sube un archivo CSV para continuar.';
+				return;
+			}
 			if (!bulk.rows.length) {
 				formError = 'Tu CSV no tiene filas válidas para previsualizar.';
 				return;
@@ -1128,6 +1145,28 @@
 			>
 				<!-- Slide 1: Editar -->
 				<section class="w-full flex-none space-y-6 overflow-x-hidden">
+					<div class="flex w-full rounded-2xl border bg-white p-1" role="tablist" aria-label="Tipo de carga">
+						<button
+							type="button"
+							role="tab"
+							aria-selected={creationMode === 'individual'}
+							class={`flex-1 rounded-xl px-3 py-2 text-sm font-semibold ${creationMode === 'individual' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+							onclick={() => setCreationMode('individual')}
+						>
+							Individual
+						</button>
+						<button
+							type="button"
+							role="tab"
+							aria-selected={creationMode === 'masiva'}
+							class={`flex-1 rounded-xl px-3 py-2 text-sm font-semibold ${creationMode === 'masiva' ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-100'}`}
+							onclick={() => setCreationMode('masiva')}
+						>
+							Masiva (CSV)
+						</button>
+					</div>
+
+					{#if creationMode === 'masiva'}
 					<Card class={`rounded-3xl border bg-card text-card-foreground ${cardShadow}`}>
 						<CardContent class="p-5">
 							<div class="flex items-start justify-between gap-4">
@@ -1149,9 +1188,6 @@
 											Cancelar
 										</button>
 									{/if}
-									<Badge class={`rounded-full ${bulk.mode ? 'bg-blue-50 text-blue-700 hover:bg-blue-50' : 'bg-slate-100 text-slate-700 hover:bg-slate-100'}`}>
-										{bulk.mode ? 'Modo CSV' : 'Manual'}
-									</Badge>
 									<button
 										type="button"
 										class="text-sm font-semibold text-blue-600 hover:text-blue-700"
@@ -1223,9 +1259,9 @@
 							{/if}
 					</CardContent>
 					</Card>
+					{/if}
 
-					<!-- Manual form: solo si NO está en modo CSV -->
-					{#if !bulk.mode}
+					{#if creationMode === 'individual'}
 						<h2 class="text-[22px] font-extrabold tracking-tight text-foreground">Detalles Básicos</h2>
 
 						<Card class={`rounded-3xl border bg-card text-card-foreground ${cardShadow}`}>
@@ -1488,21 +1524,29 @@
 
 								<div class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
 									<div>
-										<Label for="create-event-registration-mode" class="text-sm font-semibold text-blue-600">Modo de registro</Label>
+										<div class="flex items-center gap-1.5">
+											<Label for="create-event-registration-mode" class="text-sm font-semibold text-blue-600">Modo de registro</Label>
+											<PolicyHelpTooltip title="Modo de registro" intro={EVENT_REGISTRATION_MODE_HELP} options={registrationModeOptions} />
+										</div>
 										<select id="create-event-registration-mode" name="registration_mode" class="mt-2 h-12 w-full rounded-2xl border px-3" bind:value={form.registrationMode}>
 											{#each registrationModeOptions as mode}
 												<option value={mode.value}>{mode.label}</option>
 											{/each}
 										</select>
 									</div>
-									<div>
-										<Label for="create-event-resubmission-policy" class="text-sm font-semibold text-blue-600">Política de reenvío de requisitos</Label>
-										<select id="create-event-resubmission-policy" name="resubmission_policy" class="mt-2 h-12 w-full rounded-2xl border px-3" bind:value={form.resubmissionPolicy}>
-											{#each resubmissionPolicyOptions as policy}
-												<option value={policy.value}>{policy.label}</option>
-											{/each}
-										</select>
-									</div>
+									{#if form.registrationMode === 'manual_review'}
+										<div>
+											<div class="flex items-center gap-1.5">
+												<Label for="create-event-reapply" class="text-sm font-semibold text-blue-600">¿Puede volver a solicitar si es rechazado?</Label>
+												<PolicyHelpTooltip title="Volver a solicitar" intro={EVENT_REAPPLY_HELP} options={EVENT_REAPPLY_OPTIONS} />
+											</div>
+											<select id="create-event-reapply" name="resubmission_policy" class="mt-2 h-12 w-full rounded-2xl border px-3" bind:value={form.resubmissionPolicy}>
+												{#each EVENT_REAPPLY_OPTIONS as option (option.value)}
+													<option value={option.value}>{option.label}</option>
+												{/each}
+											</select>
+										</div>
+									{/if}
 								</div>
 
 								<!-- Geocerca deshabilitada temporalmente: con la ubicación activa el staff no podía registrar check-ins. -->
@@ -1530,7 +1574,10 @@
 
 								<div class="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
 									<div>
-										<Label for="create-event-cancel-policy" class="text-sm font-semibold text-blue-600">Política de cancelación</Label>
+										<div class="flex items-center gap-1.5">
+											<Label for="create-event-cancel-policy" class="text-sm font-semibold text-blue-600">Política de cancelación</Label>
+											<PolicyHelpTooltip title="Política de cancelación" intro={EVENT_CANCEL_POLICY_HELP} options={cancelPolicyOptions} />
+										</div>
 										<select id="create-event-cancel-policy" name="cancel_policy" class="mt-2 h-12 w-full rounded-2xl border px-3" bind:value={form.cancelPolicy}>
 											{#each cancelPolicyOptions as policy}
 												<option value={policy.value}>{policy.label}</option>

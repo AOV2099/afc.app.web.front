@@ -8,8 +8,13 @@
 	import {
 		EVENT_STATUS_CATALOG,
 		EVENT_REGISTRATION_MODE_CATALOG,
-		EVENT_RESUBMISSION_POLICY_CATALOG,
-		EVENT_CANCEL_POLICY_CATALOG
+		EVENT_REGISTRATION_MODE_HELP,
+		EVENT_REAPPLY_HELP,
+		EVENT_REAPPLY_OPTIONS,
+		normalizeReapplyPolicy,
+		EVENT_CANCEL_POLICY_CATALOG,
+		EVENT_CANCEL_POLICY_HELP,
+		EVENT_CANCEL_POLICY_OPTIONS
 	} from '../../routes/store';
 	import {
 		EVENT_CATEGORY_OPTIONS,
@@ -23,6 +28,7 @@
 	import { Textarea } from '$lib/components/ui/textarea';
 	import { Switch } from '$lib/components/ui/switch';
 	import AfcHoursSection from '$lib/components/AfcHoursSection.svelte';
+	import PolicyHelpTooltip from '$lib/components/PolicyHelpTooltip.svelte';
 	import { afcCatalog, ensureAfcCatalog } from '$lib/stores/afcCatalog.js';
 	import {
 		afcStateFromEvent,
@@ -36,8 +42,11 @@
 
 	const statusOptions = Object.values(EVENT_STATUS_CATALOG);
 	const registrationModeOptions = Object.values(EVENT_REGISTRATION_MODE_CATALOG);
-	const resubmissionPolicyOptions = Object.values(EVENT_RESUBMISSION_POLICY_CATALOG);
-	const cancelPolicyOptions = Object.values(EVENT_CANCEL_POLICY_CATALOG);
+	// "Penalizar inasistencia" solo se ofrece si el evento ya la tiene asignada.
+	$: cancelPolicyOptions =
+		form.cancelPolicy === 'penalize_no_show'
+			? [...EVENT_CANCEL_POLICY_OPTIONS, EVENT_CANCEL_POLICY_CATALOG.penalize_no_show]
+			: EVENT_CANCEL_POLICY_OPTIONS;
 	const categoryOptions = EVENT_CATEGORY_OPTIONS;
 
 	let loading = false;
@@ -57,7 +66,7 @@
 		endsAt: '',
 		status: 'draft',
 		registrationMode: 'auto',
-		resubmissionPolicy: 'only_changes_requested',
+		resubmissionPolicy: 'not_allowed',
 		allowSelfCheckin: true,
 		geoEnforced: false,
 		cancelPolicy: 'free_cancel',
@@ -137,7 +146,7 @@
 			endsAt: isoToLocalDatetime(ev.ends_at),
 			status: ev.status || 'draft',
 			registrationMode: ev.registration_mode || 'auto',
-			resubmissionPolicy: ev.resubmission_policy || 'only_changes_requested',
+			resubmissionPolicy: normalizeReapplyPolicy(ev.resubmission_policy),
 			allowSelfCheckin: Boolean(ev.allow_self_checkin),
 			// Geocerca deshabilitada temporalmente; restaurar: geoEnforced: Boolean(ev.geo_enforced),
 			geoEnforced: false,
@@ -458,26 +467,37 @@
 
 			<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
 				<div>
-					<div class="text-sm font-semibold text-blue-600">Modo de registro</div>
+					<div class="flex items-center gap-1.5 text-sm font-semibold text-blue-600">
+						Modo de registro
+						<PolicyHelpTooltip title="Modo de registro" intro={EVENT_REGISTRATION_MODE_HELP} options={registrationModeOptions} />
+					</div>
 					<select class="mt-2 h-11 w-full rounded-2xl border px-3" bind:value={form.registrationMode}>
 						{#each registrationModeOptions as mode}
 							<option value={mode.value}>{mode.label}</option>
 						{/each}
 					</select>
 				</div>
-				<div>
-					<div class="text-sm font-semibold text-blue-600">Política de reenvío</div>
-					<select class="mt-2 h-11 w-full rounded-2xl border px-3" bind:value={form.resubmissionPolicy}>
-						{#each resubmissionPolicyOptions as policy}
-							<option value={policy.value}>{policy.label}</option>
-						{/each}
-					</select>
-				</div>
+				{#if form.registrationMode === 'manual_review'}
+					<div>
+						<div class="flex items-center gap-1.5 text-sm font-semibold text-blue-600">
+							¿Puede volver a solicitar si es rechazado?
+							<PolicyHelpTooltip title="Volver a solicitar" intro={EVENT_REAPPLY_HELP} options={EVENT_REAPPLY_OPTIONS} />
+						</div>
+						<select class="mt-2 h-11 w-full rounded-2xl border px-3" bind:value={form.resubmissionPolicy}>
+							{#each EVENT_REAPPLY_OPTIONS as option (option.value)}
+								<option value={option.value}>{option.label}</option>
+							{/each}
+						</select>
+					</div>
+				{/if}
 			</div>
 
 			<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
 				<div>
-					<div class="text-sm font-semibold text-blue-600">Política de cancelación</div>
+					<div class="flex items-center gap-1.5 text-sm font-semibold text-blue-600">
+						Política de cancelación
+						<PolicyHelpTooltip title="Política de cancelación" intro={EVENT_CANCEL_POLICY_HELP} options={EVENT_CANCEL_POLICY_OPTIONS} />
+					</div>
 					<select class="mt-2 h-11 w-full rounded-2xl border px-3" bind:value={form.cancelPolicy}>
 						{#each cancelPolicyOptions as policy}
 							<option value={policy.value}>{policy.label}</option>

@@ -135,6 +135,11 @@
 		if (isPastEvent(item)) {
 			return { label: 'Evento finalizado', disabled: true, action: 'none' };
 		}
+		if (registrationStatus === 'rejected') {
+			return item?.allowsReapply
+				? { label: 'Volver a solicitar', disabled: false, action: 'register' }
+				: { label: 'Solicitud rechazada', disabled: true, action: 'none' };
+		}
 
 		return { label: 'Inscribirse ahora', disabled: false, action: 'register' };
 	}
@@ -278,7 +283,8 @@
 			organizer: event?.organizer || event?.attributes?.organizer || 'Sin organizador',
 			description: event?.description || '',
 			availabilityLabel: isPastEvent(event) ? 'Este evento ya finalizó.' : '',
-			isPast: isPastEvent(event)
+			isPast: isPastEvent(event),
+			allowsReapply: event?.resubmission_policy === 'allowed'
 		};
 	}
 

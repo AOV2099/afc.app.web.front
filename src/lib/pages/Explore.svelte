@@ -209,12 +209,16 @@
       }
 
       if (registrationStatus === 'rejected') {
+        const canReapply = item?.raw?.resubmission_policy === 'allowed' && !isPastEvent(item);
         return {
-          label: 'Rechazado',
-          disabled: true,
-          action: 'none',
+          label: canReapply ? 'Volver a solicitar' : 'Solicitud rechazada',
+          disabled: !canReapply,
+          action: canReapply ? 'register' : 'none',
           ticket: null,
-          ...base
+          ...base,
+          secondaryLabel: null,
+          secondaryDisabled: true,
+          secondaryAction: 'none'
         };
       }
     }
