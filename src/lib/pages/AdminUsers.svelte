@@ -250,6 +250,8 @@
 	$: canImportStudents = !importDisabledMessage && userAdminPermissions?.can_import_students !== false;
 	$: assignableRoleOptions = userAdminPermissions?.creatable_roles ?? getAssignableAdminUserRoles(currentUser);
 	$: passwordManagedRoles = userAdminPermissions?.password_roles ?? ['visitor', 'staff'];
+	// null = sin límite propio; el formato de 4 enteros ya acota a 9999.99 como el back.
+	$: maxHoursPerUpload = userAdminPermissions?.max_hours_per_upload ?? null;
 	$: if (isScopedAdmin && currentCareerId !== null && careerFilter !== String(currentCareerId)) {
 		careerFilter = String(currentCareerId);
 	}
@@ -868,8 +870,14 @@
 
 		const payload = buildManualHoursAdjustmentPayload(hoursForm);
 		const hours = Number(payload.hours);
-		if (!/^\d{1,3}(?:\.\d{1,2})?$/u.test(payload.hours) || hours <= 0 || hours > 100) {
-			hoursError = 'Las horas deben ser mayores a 0, no exceder 100 y tener máximo 2 decimales.';
+		if (
+			!/^\d{1,4}(?:\.\d{1,2})?$/u.test(payload.hours) ||
+			hours <= 0 ||
+			(maxHoursPerUpload !== null && hours > maxHoursPerUpload)
+		) {
+			hoursError = maxHoursPerUpload !== null
+				? `Las horas deben ser mayores a 0, no exceder ${maxHoursPerUpload} y tener máximo 2 decimales.`
+				: 'Las horas deben ser mayores a 0, no exceder 9999.99 y tener máximo 2 decimales.';
 			return;
 		}
 		if (!payload.category) {
@@ -1506,6 +1514,7 @@
 					/>
 					<p class="text-xs text-muted-foreground">
 						Columnas exactas: numero_cuenta, horas, motivo. Máximo 2 MB y {HOURS_CSV_MAX_ROWS} filas.
+						{#if maxHoursPerUpload !== null}Máximo {maxHoursPerUpload} horas por fila.{/if}
 					</p>
 					<p class="text-xs text-muted-foreground">Cada motivo debe contener entre 5 y 500 caracteres.</p>
 					{#if hoursImportFile}
@@ -2176,13 +2185,17 @@
 					bind:value={hoursForm.hours}
 					type="number"
 					min="0.01"
-					max="100"
+					max={maxHoursPerUpload ?? 9999.99}
 					step="0.01"
 					inputmode="decimal"
 					placeholder="Ej. 2.5"
 					disabled={hoursSubmitting}
 				/>
-				<p class="text-xs text-muted-foreground">Máximo 100 horas por ajuste.</p>
+				<p class="text-xs text-muted-foreground">
+					{maxHoursPerUpload !== null
+						? `Máximo ${maxHoursPerUpload} horas por ajuste.`
+						: 'Sin límite por ajuste; se acredita hasta completar la meta del alumno.'}
+				</p>
 			</div>
 
 			<div class="space-y-2">
