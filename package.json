@@ -16,6 +16,7 @@
 		"test:e2e:enrollment": "playwright test tests/e2e/event-enrollment.spec.js",
 		"test:e2e:attendance": "playwright test tests/e2e/event-attendance.spec.js",
 		"test:e2e:destructive": "playwright test tests/e2e/destructive-flows.spec.js",
+		"test:e2e:checkin": "playwright test tests/e2e/checkin-flows.spec.js",
 		"test:e2e:contract": "playwright test --grep @contract",
 		"test:e2e:ui": "playwright test --ui",
 		"test:e2e:headed": "playwright test --headed",

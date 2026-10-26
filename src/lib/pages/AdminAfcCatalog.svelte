@@ -67,7 +67,8 @@
 			min_hours: '',
 			max_hours: '',
 			sort_order: 0,
-			is_active: true
+			is_active: true,
+			multi_session: false
 		};
 	}
 
@@ -123,7 +124,7 @@
 		const problem = checkScenarioFitsType(type, normalized.value);
 		if (problem) return problem;
 		if (normalized.value.kind === AFC_SCENARIO_KIND.COURSE_DURATION) {
-			return 'Se calcula con las horas efectivas capturadas en el evento (× 2, máx. 20 h por jornada).';
+			return 'Se calcula con las horas efectivas capturadas en el evento (× 2, máx. 20 h por sesión).';
 		}
 		const result = calculateAfcHours({ type, scenario: normalized.value });
 		return result.ok ? `Horas AFC resultantes: ${formatAfcHours(result.valuation.final_hours)}` : result.message;
@@ -147,7 +148,8 @@
 			min_hours: hoursText(type.min_hours),
 			max_hours: hoursText(type.max_hours),
 			sort_order: type.sort_order,
-			is_active: type.is_active
+			is_active: type.is_active,
+			multi_session: Boolean(type.multi_session)
 		};
 		typeEditingId = type.id;
 		typeError = '';
@@ -279,6 +281,9 @@
 								<h2 class="text-lg font-semibold">{type.name}</h2>
 								<Badge class="rounded-full bg-slate-100 text-slate-700 hover:bg-slate-100">{type.key}</Badge>
 								<Badge class="rounded-full bg-blue-50 text-blue-700 hover:bg-blue-50">{formatAfcRange(type)}</Badge>
+								{#if type.multi_session}
+									<Badge class="rounded-full bg-violet-50 text-violet-700 hover:bg-violet-50">Varias sesiones</Badge>
+								{/if}
 								{#if !type.is_active}
 									<Badge class="rounded-full bg-red-50 text-red-700 hover:bg-red-50">Inactiva</Badge>
 								{/if}
@@ -399,6 +404,15 @@
 			<label class="flex items-center gap-2 self-end pb-2 text-sm">
 				<Switch aria-label="Actividad activa" bind:checked={typeForm.is_active} />
 				Activa
+			</label>
+			<label class="flex items-start gap-2 text-sm sm:col-span-2">
+				<Switch aria-label="Admite varias sesiones" bind:checked={typeForm.multi_session} />
+				<span>
+					Admite varias sesiones
+					<span class="block text-xs text-muted-foreground">
+						Solo estas actividades pueden usarse en eventos de varias sesiones; sus horas se acreditan al cumplir la asistencia mínima.
+					</span>
+				</span>
 			</label>
 		</div>
 

@@ -1,15 +1,11 @@
 <script>
   import { onMount } from 'svelte';
   import { toast } from 'svelte-sonner';
-  import QRCode from 'qrcode';
-  import { toPng } from 'html-to-image';
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
   import { ScrollArea, Scrollbar } from "$lib/components/ui/scroll-area";
   import * as Dialog from '$lib/components/ui/dialog/index.js';
   import { adminEventsApi, publicEventsApi, myRegistrationsApi } from '$lib/services/api';
-  import { getEventCategoryMeta } from '$lib/catalogs/eventCategories';
-  import { getEventCategoryIcon } from '$lib/catalogs/eventCategoryIcons';
   import {
     DEFAULT_EVENT_STATUS_FILTER,
     eventStatusesQueryValue,
@@ -17,15 +13,17 @@
     isPastEvent,
     isVisibleToUser
   } from '$lib/utils/events.js';
+  import { attendancePreview, describeAttendanceProgress } from '$lib/utils/eventSessions.js';
+  import { formatEventSchedule, mapEventToCard } from '$lib/utils/eventCards.js';
   import EventCard from "$lib/components/EventCard.svelte";
+  import TicketDialog from '$lib/components/TicketDialog.svelte';
+  import EnrolledEventFooter from '$lib/components/EnrolledEventFooter.svelte';
   import EventStatusMultiSelect from "$lib/components/EventStatusMultiSelect.svelte";
 
-  import { Search, SlidersHorizontal, Ticket, Download } from "lucide-svelte";
+  import { Search, SlidersHorizontal } from "lucide-svelte";
   import EventDetailSheet from "./EventDetailSheet.svelte";
 
   export let adminMode = false;
-
-  const EVENT_IMAGE_FALLBACK = 'https://gaceta.cch.unam.mx/sites/default/files/styles/imagen_articulos_1920x1080/public/2020-07/video_mensaje_1.jpg?h=d1cb525d&itok=4PYz5F61';
 
   let sheetOpen = false;
   let selectedEvent = null;
@@ -48,64 +46,17 @@
     totalPages: 1
   };
 
-  let featured = [];
   let upcoming = [];
   let registeringEventId = null;
   let registrationsByEventId = {};
   let ticketDialogOpen = false;
-  let selectedTicket = null;
-  let ticketCaptureContainer;
+  let ticketEventId = null;
   let unsubscribeDialogOpen = false;
   let unsubscribingEventId = null;
   let unsubscribeTargetEvent = null;
 
-
-  function resolveEventImage(event) {
-    return (
-      event?.coverImageUrl ||
-      event?.cover_image_url ||
-      event?.image ||
-      event?.image_url ||
-      event?.cover_url ||
-      event?.attributes?.cover_image_url ||
-      event?.attributes?.image_url ||
-      EVENT_IMAGE_FALLBACK
-    );
-  }
-
   function mapAdminEventToUi(event) {
-    const startsAt = event?.starts_at ? new Date(event.starts_at) : null;
-    const location = event?.location || event?.attributes?.location || 'Sin ubicación';
-    const organizer = event?.organizer || event?.attributes?.organizer || 'Sin organizador';
-    const categoryMeta = getEventCategoryMeta(event?.category || 'general');
-    const rawCapacity = event?.capacity ?? event?.attributes?.capacity ?? event?.cupo ?? event?.attributes?.cupo;
-    const capacityEnabled = event?.capacity_enabled;
-    const hasCapacityValue = rawCapacity !== undefined && rawCapacity !== null && rawCapacity !== '';
-    const hasCapacity = capacityEnabled === false ? false : hasCapacityValue;
-    const capacity = hasCapacity ? Number(rawCapacity) || 0 : null;
-    const registrationsCount = Number(event?.registrations_count ?? event?.attributes?.registrations_count ?? 0) || 0;
-    const startsLabel = startsAt && !Number.isNaN(startsAt.getTime())
-      ? `${startsAt.toLocaleDateString('es-MX', { day: '2-digit' })} de ${startsAt.toLocaleDateString('es-MX', { month: 'long' })} · ${startsAt.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}`
-      : 'Sin fecha';
-
-    return {
-      id: event?.id,
-      tag: categoryMeta.label,
-      tagClass: categoryMeta.tagClass,
-      categoryIcon: getEventCategoryIcon(categoryMeta.iconKey),
-      title: event?.title || 'Sin título',
-      date: startsLabel,
-      img: resolveEventImage(event),
-      credits: Number(event?.hours_value) > 0 ? `${event.hours_value} Hrs.` : null,
-      category: categoryMeta.label.toUpperCase(),
-      place: location,
-      organizer,
-      capacity,
-      hasCapacity,
-      registrationsCount,
-      description: event?.description || '',
-      raw: event
-    };
+    return mapEventToCard(event);
   }
 
   function getAvailabilityLabel(item) {
@@ -126,6 +77,42 @@
     return registrationsByEventId?.[eventId] || null;
   }
 
+  const ENROLLED_STATUSES = new Set(['approved', 'pending', 'changes_requested', 'cancel_pending']);
+
+  function enrollmentLabel(entry) {
+    const status = String(entry?.registration?.status || '').toLowerCase();
+    if (status === 'pending' || status === 'changes_requested') return 'Solicitud pendiente';
+    if (status === 'cancel_pending') return 'Baja en revisión';
+    return describeAttendanceProgress(entry?.attendance) || 'Inscrito';
+  }
+
+  // Inscripciones activas con una sesión pendiente de asistir, ordenadas por esa sesión.
+  function buildEnrolled(byEvent, upcomingItems) {
+    return Object.values(byEvent || {})
+      .filter((entry) => ENROLLED_STATUSES.has(String(entry?.registration?.status || '').toLowerCase()))
+      .filter((entry) => !['cancelled', 'ended'].includes(String(entry?.event?.status || '').toLowerCase()))
+      .map((entry) => {
+        const known = upcomingItems.find((item) => String(item.id) === String(entry?.event?.id));
+        const next = entry?.attendance?.next_session || null;
+        // Una inscripción recién hecha aún no trae asistencia: se apoya en el evento listado.
+        if (!next && (entry?.attendance || !known)) return null;
+        const item = known || mapAdminEventToUi(entry.event);
+        const startsAt = next?.starts_at || item.raw?.starts_at;
+        return {
+          ...item,
+          date: next ? formatEventSchedule(next.starts_at, next.ends_at) : item.date,
+          enrollmentLabel: enrollmentLabel(entry),
+          canViewTicket:
+            String(entry?.registration?.status || '').toLowerCase() === 'approved' && Boolean(entry?.ticket),
+          sortKey: new Date(startsAt).getTime() || 0
+        };
+      })
+      .filter(Boolean)
+      .sort((a, b) => a.sortKey - b.sortKey);
+  }
+
+  $: enrolled = adminMode ? [] : buildEnrolled(registrationsByEventId, upcoming);
+
   function isUsedTicket(ticket) {
     const status = String(ticket?.status || '').toLowerCase();
     return status === 'used';
@@ -142,14 +129,18 @@
     ).toLowerCase();
 
     if (registrationEntry) {
+      const attendance = registrationEntry?.attendance || null;
+      const attendanceLabel = describeAttendanceProgress(attendance);
+      const hasPendingSessions = Number(attendance?.total) > 1 && Number(attendance?.pending) > 0;
       const base = {
         secondaryLabel: 'Darme de baja',
-        secondaryDisabled: false,
+        // El back rechaza la baja en cuanto hay una asistencia registrada.
+        secondaryDisabled: Number(attendance?.attended) > 0 || isUsedTicket(ticket),
         secondaryAction: 'request_unsubscribe',
-        availabilityLabel: null
+        availabilityLabel: attendanceLabel || null
       };
 
-      if (registrationStatus === 'approved' && isUsedTicket(ticket)) {
+      if (registrationStatus === 'approved' && isUsedTicket(ticket) && !hasPendingSessions) {
         return {
           label: 'Asistencia registrada',
           disabled: true,
@@ -158,7 +149,7 @@
           secondaryLabel: null,
           secondaryDisabled: true,
           secondaryAction: 'none',
-          availabilityLabel: 'Este ticket ya ha sido registrado.'
+          availabilityLabel: attendanceLabel || 'Este ticket ya ha sido registrado.'
         };
       }
 
@@ -190,9 +181,9 @@
 
       if (registrationStatus === 'approved' && ticket) {
         return {
-          label: 'Ver ticket',
-          disabled: false,
-          action: 'view_ticket',
+          label: null,
+          disabled: true,
+          action: 'none',
           ticket,
           ...base
         };
@@ -265,7 +256,7 @@
 
   function syncSelectedEventState(eventId) {
     if (!selectedEvent || selectedEvent.id !== eventId) return;
-    const item = upcoming.find((ev) => ev.id === eventId) || featured.find((ev) => ev.id === eventId);
+    const item = upcoming.find((ev) => ev.id === eventId) || enrolled.find((ev) => ev.id === eventId);
     if (!item) return;
 
     const primaryState = getPrimaryStateForEvent(item);
@@ -344,13 +335,11 @@
           const visible = adminMode ? mapped : mapped.filter((item) => isVisibleToUser(item, now));
 
           upcoming = adminMode ? visible : visible.filter((item) => isFutureEvent(item, now));
-          featured = visible.slice(0, 5);
       pagination = res?.pagination || pagination;
       filters = { ...filters, ...query };
     } catch (err) {
       loadError = err?.message || 'No se pudieron cargar los eventos.';
       upcoming = [];
-      featured = [];
     } finally {
       loadingEvents = false;
     }
@@ -421,7 +410,8 @@
 		secondaryLabel: adminMode ? null : primaryState.secondaryLabel,
 		secondaryDisabled: adminMode ? true : primaryState.secondaryDisabled,
 		secondaryAction: adminMode ? 'none' : primaryState.secondaryAction,
-      availabilityLabel: primaryState.availabilityLabel || getAvailabilityLabel(item)
+      availabilityLabel: primaryState.availabilityLabel || getAvailabilityLabel(item),
+      ...(adminMode ? {} : attendancePreview(registrationsByEventId?.[item.id] ?? registrationsByEventId?.[String(item.id)]))
     };
 
     sheetOpen = true;
@@ -431,9 +421,6 @@
     const nextCount = Number(count ?? 0) || 0;
 
     upcoming = upcoming.map((item) =>
-      item.id === eventId ? { ...item, registrationsCount: nextCount } : item
-    );
-    featured = featured.map((item) =>
       item.id === eventId ? { ...item, registrationsCount: nextCount } : item
     );
 
@@ -475,36 +462,6 @@
 
     const action = evt?.primaryAction || 'register';
     if (action === 'none') return;
-
-    if (action === 'view_ticket') {
-      try {
-        const res = await publicEventsApi.getEventTicket(evt.id);
-        const ticketCode = res?.ticket?.ticket_code || 'Sin código';
-        const qrDataUrl = ticketCode && ticketCode !== 'Sin código'
-          ? await QRCode.toDataURL(ticketCode, {
-              width: 280,
-              margin: 1,
-              color: {
-                dark: '#0f172a',
-                light: '#ffffff'
-              }
-            })
-          : null;
-
-        selectedTicket = {
-          eventTitle: res?.event?.title || evt?.title || 'Evento',
-          registrationStatus: res?.registration?.status || 'approved',
-          ticketCode,
-          ticketStatus: res?.ticket?.status || 'active',
-          issuedAt: res?.ticket?.issued_at || null,
-          qrDataUrl
-        };
-        ticketDialogOpen = true;
-      } catch (error) {
-        toast.error(error?.message || 'No se pudo consultar el ticket.');
-      }
-      return;
-    }
 
     if (registeringEventId) return;
 
@@ -603,28 +560,9 @@
     }
   }
 
-  async function downloadTicketImage() {
-    if (!ticketCaptureContainer || !selectedTicket) return;
-
-    try {
-      const dataUrl = await toPng(ticketCaptureContainer, {
-        cacheBust: true,
-        pixelRatio: 2,
-        backgroundColor: '#ffffff'
-      });
-
-      const eventTitle = String(selectedTicket?.eventTitle || 'evento')
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/gi, '-')
-        .replace(/(^-|-$)/g, '') || 'evento';
-
-      const link = document.createElement('a');
-      link.download = `ticket-${eventTitle}.png`;
-      link.href = dataUrl;
-      link.click();
-    } catch {
-      toast.error('No se pudo descargar la imagen del ticket.');
-    }
+  function openTicket(eventId) {
+    ticketEventId = eventId;
+    ticketDialogOpen = true;
   }
 
   function searchEvents() {
@@ -689,32 +627,41 @@
     <div class="mt-3 text-sm font-semibold text-red-600">{loadError}</div>
   {/if}
 
-  <!-- Destacados -->
-  <div class="mt-8 flex items-center justify-between">
-    <h2 class="text-lg font-semibold sm:text-xl">Destacados</h2>
-    <Button variant="link" class="h-auto px-0 text-primary">Ver todos</Button>
-  </div>
+  {#if !adminMode}
+    <!-- Inscritos -->
+    <div class="mt-8 flex items-center justify-between">
+      <h2 class="text-lg font-semibold sm:text-xl">Inscritos</h2>
+    </div>
 
-  <ScrollArea class="mt-3 w-full whitespace-nowrap">
-    {#if loadingEvents}
-      <div class="pb-3 text-sm text-muted-foreground">Cargando eventos destacados...</div>
-    {:else if !featured.length}
-      <div class="pb-3 text-sm text-muted-foreground">No hay eventos destacados disponibles.</div>
-    {:else}
-      <div class="flex gap-4 pb-3">
-        {#each featured as item (item.id)}
-          <EventCard
-            event={item}
-            variant="featured"
-            availabilityLabel={getAvailabilityLabel(item)}
-            onClick={() => openEventDetail(item)}
-          />
-        {/each}
-      </div>
-    {/if}
+    <ScrollArea class="mt-3 w-full whitespace-nowrap">
+      {#if loadingEvents}
+        <div class="pb-3 text-sm text-muted-foreground">Cargando tus inscripciones...</div>
+      {:else if !enrolled.length}
+        <div class="pb-3 text-sm text-muted-foreground">No estás inscrito en eventos próximos.</div>
+      {:else}
+        <div class="flex gap-4 pb-3" data-testid="enrolled-events">
+          {#each enrolled as item, i (item.id)}
+            <EventCard
+              index={i}
+              event={item}
+              variant="carousel"
+              availabilityLabel={item.enrollmentLabel}
+              onClick={() => openEventDetail(item)}
+            >
+              <svelte:fragment slot="footer">
+                <EnrolledEventFooter
+                  canViewTicket={item.canViewTicket}
+                  onViewTicket={() => openTicket(item.id)}
+                />
+              </svelte:fragment>
+            </EventCard>
+          {/each}
+        </div>
+      {/if}
 
-    <Scrollbar orientation="horizontal" />
-  </ScrollArea>
+      <Scrollbar orientation="horizontal" />
+    </ScrollArea>
+  {/if}
 
   <!-- Próximos eventos -->
   <div class="mt-6">
@@ -730,10 +677,10 @@
     </div>
   {:else}
     <div class="mt-3 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-      {#each upcoming as e (e.id)}
+      {#each upcoming as e, i (e.id)}
         <EventCard
+          index={i}
           event={e}
-          variant="upcoming"
           availabilityLabel={getAvailabilityLabel(e)}
           onClick={() => openEventDetail(e)}
         />
@@ -799,45 +746,4 @@
   </Dialog.Content>
 </Dialog.Root>
 
-<Dialog.Root bind:open={ticketDialogOpen}>
-  <Dialog.Content class="mx-auto w-[min(92vw,420px)] rounded-2xl p-0">
-    <div class="p-5">
-      <div bind:this={ticketCaptureContainer} class="rounded-2xl border bg-white p-4">
-        <div class="flex items-center gap-2 text-blue-700">
-          <Ticket class="h-4 w-4" />
-          <h3 class="text-lg font-semibold">Ticket del evento</h3>
-        </div>
-
-        <div class="mt-4 space-y-2 text-sm">
-          <div>
-            <span class="font-semibold">Evento:</span> {selectedTicket?.eventTitle || 'Sin evento'}
-          </div>
-        </div>
-
-        {#if selectedTicket?.qrDataUrl}
-          <div class="mt-5 flex justify-center">
-            <img
-              src={selectedTicket.qrDataUrl}
-              alt={`QR ticket ${selectedTicket?.ticketCode || ''}`}
-              class="h-56 w-56 rounded-md object-contain"
-            />
-          </div>
-        {/if}
-      </div>
-
-      <div class="mt-5 grid grid-cols-2 gap-3">
-        <Button
-          variant="secondary"
-          class="w-full rounded-xl"
-          onclick={() => (ticketDialogOpen = false)}
-        >
-          Cerrar
-        </Button>
-        <Button class="w-full rounded-xl bg-blue-600 text-white hover:bg-blue-700" onclick={downloadTicketImage}>
-          <Download class="mr-2 h-4 w-4" />
-          Descargar
-        </Button>
-      </div>
-    </div>
-  </Dialog.Content>
-</Dialog.Root>
+<TicketDialog bind:open={ticketDialogOpen} eventId={ticketEventId} />

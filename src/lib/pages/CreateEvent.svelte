@@ -32,12 +32,23 @@
 	import * as Dialog from '$lib/components/ui/dialog';
 	import AfcHoursSection from '$lib/components/AfcHoursSection.svelte';
 	import PolicyHelpTooltip from '$lib/components/PolicyHelpTooltip.svelte';
+	import EventSessionsEditor from '$lib/components/EventSessionsEditor.svelte';
+	import {
+		ATTENDANCE_PERCENT_RANGE,
+		describeAttendanceRule,
+		sessionRowsToPayload,
+		sortSessionRows,
+		sessionDaysFromRows,
+		sessionDaysFromRange,
+		validateSessionRows
+	} from '$lib/utils/eventSessions.js';
 	import { afcCatalog, ensureAfcCatalog } from '$lib/stores/afcCatalog.js';
 	import {
 		buildAfcValuationPayload,
 		computeAfcPreview,
 		createAfcState,
 		formatAfcHours,
+		getAfcSelection,
 		validateAfcForSave
 	} from '$lib/utils/afcHoursForm.js';
 
@@ -73,6 +84,8 @@
 	let afcState = createAfcState();
 	let afcHoursEnabled = true;
 	let creationMode = 'individual';
+	let sessionRows = [];
+	let attendancePercent = ATTENDANCE_PERCENT_RANGE.default;
 	const MAX_EVENT_HOURS = 100;
 	const minimumEventDate = (() => {
 		const now = new Date();
@@ -157,6 +170,8 @@
 		selectedStaffUserId = '';
 		afcState = createAfcState();
 		afcHoursEnabled = true;
+		sessionRows = [];
+		attendancePercent = ATTENDANCE_PERCENT_RANGE.default;
 		form = {
 			title: '',
 			category: 'general',
@@ -495,10 +510,16 @@
 	}
 
 	function buildSingleEventPayload() {
-		const startsAt = toIsoFromDateTime(form.date, form.time);
-		const endsAt =
-			toIsoFromDateTime(form.endDate, form.endTime) ||
-			(startsAt ? addHoursToIso(startsAt, 2) : null);
+		const multiSessions =
+			sessionMode === 'multi'
+				? sessionRowsToPayload(sessionRows).filter((session) => session.starts_at && session.ends_at)
+				: null;
+		const startsAt = multiSessions
+			? (multiSessions[0]?.starts_at ?? null)
+			: toIsoFromDateTime(form.date, form.time);
+		const endsAt = multiSessions
+			? (multiSessions[multiSessions.length - 1]?.ends_at ?? null)
+			: toIsoFromDateTime(form.endDate, form.endTime) || (startsAt ? addHoursToIso(startsAt, 2) : null);
 		const cancelDeadline = toIsoFromDateTime(form.cancelDeadlineDate, form.cancelDeadlineTime);
 		const selectedExistingStaffId = normalizeStaffUserId(selectedStaffUserId);
 		const geo =
@@ -521,7 +542,7 @@
 			starts_at: startsAt,
 			ends_at: endsAt,
 			afc_valuation: afcHoursEnabled
-				? buildAfcValuationPayload(afcState, { catalog: $afcCatalog.types, defaultDate: form.date })
+				? buildAfcValuationPayload(afcState, { catalog: $afcCatalog.types, defaultDate: eventStartDate })
 				: null,
 			...(afcHoursEnabled ? {} : { afc_hours_enabled: false, hours_value: 0 }),
 			capacity_enabled: Boolean(form.capacityEnabled),
@@ -537,7 +558,8 @@
 				? cancelDeadline
 				: cancelDeadline,
 			geo,
-			sessions: buildSingleSession(startsAt, endsAt, null),
+			sessions: multiSessions ?? buildSingleSession(startsAt, endsAt, null),
+			min_attendance_percent: multiSessions && multiSessions.length > 1 ? Number(attendancePercent) : 100,
 			attributes: {
 				location: form.location?.trim() || null,
 				organizer: form.organizer?.trim() || null,
@@ -639,13 +661,17 @@
 		if (!form.title?.trim()) errors.title = 'Campo obligatorio';
 		if (!form.description?.trim()) errors.description = 'Campo obligatorio';
 		if (publishing) {
-			if (!form.date) errors.date = 'Campo obligatorio';
-			if (!form.time) errors.time = 'Campo obligatorio';
+			if (sessionMode === 'single' && !form.date) errors.date = 'Campo obligatorio';
+			if (sessionMode === 'single' && !form.time) errors.time = 'Campo obligatorio';
 			if (!form.location?.trim()) errors.location = 'Campo obligatorio';
 			if (!form.organizer?.trim()) errors.organizer = 'Campo obligatorio';
 		}
-		const startsAt = toIsoFromDateTime(form.date, form.time);
-		const endsAt = toIsoFromDateTime(form.endDate, form.endTime);
+		if (sessionMode === 'multi') {
+			const sessionsError = publishing || sessionRows.length ? validateSessionRows(sessionRows) : '';
+			if (sessionsError) errors.sessions = sessionsError;
+		}
+		const startsAt = sessionMode === 'single' ? toIsoFromDateTime(form.date, form.time) : null;
+		const endsAt = sessionMode === 'single' ? toIsoFromDateTime(form.endDate, form.endTime) : null;
 		if (startsAt && new Date(startsAt).getTime() < Date.now()) {
 			errors.date = 'No puede estar en el pasado';
 			errors.time = 'No puede estar en el pasado';
@@ -658,7 +684,7 @@
 			const afcValidation = validateAfcForSave(afcState, {
 				catalog: $afcCatalog.types,
 				status: form.status,
-				defaultDate: form.date
+				defaultDate: eventStartDate
 			});
 			if (!afcValidation.ok) errors.afc = afcValidation.message;
 		}
@@ -686,7 +712,7 @@
 			fieldErrors: errors,
 			message:
 				Object.keys(errors).length > 0
-					? errors._payload || errors.afc || 'Completa los campos marcados en rojo.'
+					? errors.sessions || errors._payload || errors.afc || 'Completa los campos marcados en rojo.'
 					: ''
 		};
 	}
@@ -1090,11 +1116,16 @@
 	$: selectedCategoryMeta = getEventCategoryMeta(form.category);
 	$: selectedCategoryIcon = getEventCategoryIcon(selectedCategoryMeta.iconKey);
 	$: cancelPolicyMeta = getCancelPolicyMeta(form.cancelPolicy);
-	$: afcPreview = computeAfcPreview(afcState, { catalog: $afcCatalog.types, defaultDate: form.date });
+	// La actividad AFC define si el evento es de una o de varias sesiones.
+	$: sessionMode =
+		afcHoursEnabled && getAfcSelection(afcState, $afcCatalog.types).type?.multi_session ? 'multi' : 'single';
+	$: eventStartDate = sessionMode === 'multi' ? (sortSessionRows(sessionRows)[0]?.date || '') : form.date;
+	$: previewSessions = sortSessionRows(sessionRows);
+	$: afcPreview = computeAfcPreview(afcState, { catalog: $afcCatalog.types, defaultDate: eventStartDate });
 	$: if (
 		fieldErrors.afc &&
 		(!afcHoursEnabled ||
-			validateAfcForSave(afcState, { catalog: $afcCatalog.types, status: form.status, defaultDate: form.date }).ok)
+			validateAfcForSave(afcState, { catalog: $afcCatalog.types, status: form.status, defaultDate: eventStartDate }).ok)
 	) {
 		fieldErrors = { ...fieldErrors, afc: undefined };
 	}
@@ -1319,11 +1350,16 @@
 								<AfcHoursSection
 									bind:state={afcState}
 									bind:enabled={afcHoursEnabled}
+									multiSession={sessionMode === 'multi'}
+									sessionDays={sessionMode === 'multi'
+										? sessionDaysFromRows(sessionRows)
+										: sessionDaysFromRange(toIsoFromDateTime(form.date, form.time), toIsoFromDateTime(form.endDate, form.endTime))}
+									attendanceRule={sessionRows.length > 1 ? describeAttendanceRule(Number(attendancePercent), sessionRows.length) : ''}
 									catalog={$afcCatalog.types}
 									catalogStatus={$afcCatalog.status === 'idle' ? 'loading' : $afcCatalog.status}
 									catalogError={$afcCatalog.error}
 									idPrefix="create-event-afc"
-									defaultDate={form.date}
+									defaultDate={eventStartDate}
 									error={fieldErrors.afc || ''}
 								/>
 							</CardContent>
@@ -1332,6 +1368,14 @@
 						<h2 class="text-[22px] font-extrabold tracking-tight text-foreground">Fecha y Lugar</h2>
 						<Card class={`rounded-3xl border bg-card text-card-foreground ${cardShadow}`}>
 							<CardContent class="p-5">
+								<EventSessionsEditor
+									mode={sessionMode}
+									bind:rows={sessionRows}
+									bind:attendancePercent
+									idPrefix="create-event-sessions"
+									minDate={minimumEventDate}
+									error={fieldErrors.sessions || ''}
+								>
 								<div class="grid w-full grid-cols-1 gap-4 sm:grid-cols-2 overflow-hidden">
 									<div>
 										<Label for="create-event-start-date" class={`text-sm font-semibold ${fieldErrors.date ? 'text-red-600' : 'text-blue-600'}`}>Fecha de inicio</Label>
@@ -1377,6 +1421,7 @@
 										{#if fieldErrors.endTime}<div class="mt-1 text-xs text-red-600">{fieldErrors.endTime}</div>{/if}
 									</div>
 								</div>
+								</EventSessionsEditor>
 
 								<div class="mt-5">
 									<Label for="create-event-location" class={`text-sm font-semibold ${fieldErrors.location ? 'text-red-600' : 'text-blue-600'}`}>Ubicación</Label>
@@ -1762,11 +1807,21 @@
 									<div class="mt-4 grid grid-cols-2 gap-3">
 										<div class="rounded-2xl bg-slate-50 p-3">
 										<div class="text-xs text-muted-foreground">Fecha</div>
-										<div class="mt-1 text-sm font-semibold">{form.date || '—'}</div>
+										<div class="mt-1 text-sm font-semibold">
+											{#if sessionMode === 'multi'}
+												{previewSessions.length
+													? `${previewSessions[0].date} al ${previewSessions[previewSessions.length - 1].date}`
+													: '—'}
+											{:else}
+												{form.date || '—'}
+											{/if}
+										</div>
 									</div>
 									<div class="rounded-2xl bg-slate-50 p-3">
 										<div class="text-xs text-muted-foreground">Hora</div>
-										<div class="mt-1 text-sm font-semibold">{form.time || '—'}</div>
+										<div class="mt-1 text-sm font-semibold">
+											{sessionMode === 'multi' ? previewSessions[0]?.startTime || '—' : form.time || '—'}
+										</div>
 									</div>
 								</div>
 
@@ -1842,8 +1897,13 @@
 								</div>
 
 								<div class="mt-3 rounded-2xl bg-slate-50 p-3">
-									<div class="text-xs text-muted-foreground">Sesión</div>
-									<div class="mt-1 text-sm font-semibold">Sesión principal automática</div>
+									<div class="text-xs text-muted-foreground">Sesiones</div>
+									{#if sessionMode === 'multi'}
+										<div class="mt-1 text-sm font-semibold">{previewSessions.length} sesiones</div>
+										<div class="mt-1 text-sm">{describeAttendanceRule(Number(attendancePercent), previewSessions.length)}</div>
+									{:else}
+										<div class="mt-1 text-sm font-semibold">Sesión principal automática</div>
+									{/if}
 								</div>
 							</CardContent>
 						</Card>

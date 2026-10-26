@@ -6,7 +6,9 @@
 	import { Button } from '$lib/components/ui/button';
 	import { Badge } from '$lib/components/ui/badge';
 	import { adminEventsApi, adminRequestsApi } from '$lib/services/api';
-	import { isFutureEvent, isPastEvent } from '$lib/utils/events.js';
+	import { isFutureEvent } from '$lib/utils/events.js';
+	import { mapEventToCard } from '$lib/utils/eventCards.js';
+	import EventCard from '$lib/components/EventCard.svelte';
 	import { EVENT_STATUS_CATALOG, catalogLabel } from '../../routes/store';
 
 	import { Bell, CalendarDays, CalendarPlus2, ClipboardList, Eye, QrCode } from 'lucide-svelte';
@@ -57,10 +59,6 @@
 	];
 
 	$: upcomingEvents = (Array.isArray(events) ? events : []).filter((event) => isFutureEvent(event)).map((e) => {
-		const startsAt = e?.starts_at ? new Date(e.starts_at) : null;
-		const endsAt = e?.ends_at ? new Date(e.ends_at) : null;
-		const isValidStart = startsAt && !Number.isNaN(startsAt.getTime());
-		const isValidEnd = endsAt && !Number.isNaN(endsAt.getTime());
 		const rawCapacity = e?.capacity ?? e?.attributes?.capacity ?? e?.cupo ?? e?.attributes?.cupo;
 		const capacityEnabled = e?.capacity_enabled;
 		const hasCapacityValue = rawCapacity !== undefined && rawCapacity !== null && rawCapacity !== '';
@@ -75,29 +73,19 @@
 					0
 			) || 0;
 		const availableSpots = hasCapacity ? Math.max(capacity - registrationsCount, 0) : null;
-		const availabilityLabel = `Inscritos: ${registrationsCount} · Disponibles: ${
-			hasCapacity ? availableSpots : 'Sin límite'
-		}`;
-
 		const isCareerRestricted = e?.can_manage === false;
-		const ownerCareerName = isCareerRestricted ? e?.owner_career_name || '' : '';
+		const badges = [{ label: catalogLabel(EVENT_STATUS_CATALOG, e?.status) }];
+		if (isCareerRestricted && e?.owner_career_name) {
+			badges.push({ label: e.owner_career_name, className: 'bg-slate-700 text-white hover:bg-slate-700' });
+		}
 
 		return {
+			card: mapEventToCard(e),
 			id: String(e?.id || e?.event_id || Math.random()),
-			isPast: isPastEvent(e),
+			eventId: e?.id,
 			isCareerRestricted,
-			dateMonth: isValidStart
-				? startsAt.toLocaleString('es-MX', { month: 'short' }).toUpperCase()
-				: '---',
-			dateDay: isValidStart ? String(startsAt.getDate()).padStart(2, '0') : '--',
-			title: e?.title || 'Evento',
-			time:
-				isValidStart && isValidEnd
-					? `${startsAt.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })} - ${endsAt.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}`
-					: 'Sin horario',
-			availabilityLabel,
-			metaRightTop: ownerCareerName || catalogLabel(EVENT_STATUS_CATALOG, e?.status),
-			metaRightBottom: ownerCareerName ? 'Carrera' : 'Estado'
+			badges,
+			availabilityLabel: `Inscritos: ${registrationsCount} · Disponibles: ${hasCapacity ? availableSpots : 'Sin límite'}`
 		};
 	});
 
@@ -400,47 +388,20 @@
 		<section class="mt-8">
 			<h2 class="text-[22px] font-extrabold tracking-tight text-slate-900">Próximos Eventos</h2>
 
-			<div class="mt-4 space-y-4">
+			<div class="mt-4 grid gap-4 sm:grid-cols-2">
 				{#if loading}
 					<div class="text-sm text-muted-foreground">Cargando eventos...</div>
 				{:else if !upcomingEvents.length}
 					<div class="text-sm text-muted-foreground">No hay eventos para mostrar.</div>
 				{/if}
 				{#each upcomingEvents as e (e.id)}
-					<Card class={`rounded-3xl border bg-card text-card-foreground shadow-sm ${e.isPast || e.isCareerRestricted ? 'border-slate-300 bg-slate-100 opacity-60 grayscale' : ''}`}>
-						<CardContent class="p-5">
-							<div class="flex items-center gap-4">
-								<div class="flex h-14 w-14 flex-col items-center justify-center rounded-2xl bg-slate-50">
-									<div class="text-[12px] font-extrabold text-slate-500">{e.dateMonth}</div>
-									<div class="text-[18px] font-extrabold text-slate-900">{e.dateDay}</div>
-								</div>
-
-								<div class="min-w-0 flex-1">
-									<div class="truncate text-[16px] font-extrabold text-slate-900">{e.title}</div>
-									<div class="mt-1 flex items-center gap-2 text-[13px] font-semibold text-slate-600">
-										<span class="inline-flex items-center gap-2">
-											<span class="inline-flex h-7 w-7 items-center justify-center rounded-xl bg-slate-50">
-												<CalendarDays class="h-4 w-4" />
-											</span>
-											{e.time}
-										</span>
-									</div>
-									<div class="mt-2">
-										<Badge class="rounded-full bg-slate-100 text-slate-700 hover:bg-slate-100">
-											{e.availabilityLabel}
-										</Badge>
-									</div>
-								</div>
-
-								<div class="text-right">
-									<div class="text-[14px] font-extrabold text-blue-600">
-										{e.metaRightTop}
-									</div>
-									<div class="text-[12px] font-semibold text-slate-500">{e.metaRightBottom}</div>
-								</div>
-							</div>
-						</CardContent>
-					</Card>
+					<EventCard
+						event={e.card}
+						badges={e.badges}
+						disabled={e.isCareerRestricted}
+						availabilityLabel={e.availabilityLabel}
+						onClick={() => goto(`/admin/events/${e.eventId}/edit`)}
+					/>
 				{/each}
 			</div>
 		</section>

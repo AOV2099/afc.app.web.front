@@ -11,7 +11,7 @@ import {
 
 test('template includes a UTF-8 BOM and only the exact headers', () => {
 	assert.equal(STUDENT_CSV_TEMPLATE.charCodeAt(0), 0xfeff);
-	assert.equal(STUDENT_CSV_TEMPLATE, '\uFEFFnombres,apellidos,correo,numero_cuenta\n');
+	assert.equal(STUDENT_CSV_TEMPLATE, '\uFEFFnombres,apellidos,correo,numero_cuenta,sistema\n');
 });
 
 test('file checks require a non-empty CSV no larger than 2 MB', () => {

@@ -60,6 +60,19 @@ test('scoped create payload always forces the current admin career', () => {
 	assert.equal(payload.email, 'user@example.com');
 });
 
+test('study system is only sent for students and defaults to esc', () => {
+	const scope = { isGlobalAdmin: true, currentCareerId: 1 };
+	assert.equal(buildAdminUserCreatePayload(FORM, scope).study_system, 'esc');
+	assert.equal(buildAdminUserCreatePayload({ ...FORM, studySystem: 'sua' }, scope).study_system, 'sua');
+	assert.equal(buildAdminUserCreatePayload({ ...FORM, role: 'staff', studySystem: 'sua' }, scope).study_system, undefined);
+
+	const selectedUser = { email: 'user@example.com', first_name: 'Ana', last_name: 'Ruiz', student_id: '1234567890', status: 'active', role: 'student', study_system: 'esc' };
+	const base = { email: 'user@example.com', firstName: 'Ana', lastName: 'Ruiz', studentId: '1234567890', status: 'active', role: 'student' };
+	assert.deepEqual(buildAdminUserEditPayload({ form: { ...base, studySystem: 'esc' }, selectedUser, isGlobalAdmin: false }), {});
+	assert.deepEqual(buildAdminUserEditPayload({ form: { ...base, studySystem: 'sua' }, selectedUser, isGlobalAdmin: false }), { study_system: 'sua' });
+	assert.deepEqual(buildAdminUserEditPayload({ form: { ...base, studySystem: '' }, selectedUser, isGlobalAdmin: false }), { study_system: null });
+});
+
 test('global create payload preserves selected and unassigned career behavior', () => {
 	assert.equal(
 		buildAdminUserCreatePayload(FORM, { isGlobalAdmin: true, currentCareerId: 1 }).career_id,
@@ -104,10 +117,10 @@ test('scoped edit payload never sends a career change but global edit can', () =
 	);
 });
 
-test('manual hours are available to any user with an 8-to-10 digit account number', () => {
+test('manual hours are available to non-staff users with an 8-to-10 digit account number', () => {
 	assert.equal(isManualHoursEligibleUser({ role: 'visitor', student_id: '123456789' }), true);
 	assert.equal(isManualHoursEligibleUser({ role: 'student', student_id: '123456789' }), true);
-	assert.equal(isManualHoursEligibleUser({ role: 'staff', student_id: '123456789' }), true);
+	assert.equal(isManualHoursEligibleUser({ role: 'staff', student_id: '123456789' }), false);
 	assert.equal(isManualHoursEligibleUser({ role: 'student', student_id: '12345678' }), true);
 	assert.equal(isManualHoursEligibleUser({ role: 'student', student_id: '1234567890' }), true);
 	assert.equal(isManualHoursEligibleUser({ role: 'visitor', student_id: null }), false);

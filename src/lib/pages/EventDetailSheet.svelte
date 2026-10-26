@@ -2,6 +2,7 @@
   import { Button } from "$lib/components/ui/button";
   import { Badge } from "$lib/components/ui/badge";
   import * as Dialog from "$lib/components/ui/dialog/index.js";
+  import AttendanceProgress from "$lib/components/AttendanceProgress.svelte";
 
   import { CalendarDays, MapPin, User, Users, X, ArrowRight } from "lucide-svelte";
 
@@ -9,6 +10,12 @@
   export let event = null;
   export let onPrimary = null;
   export let onSecondary = null;
+
+  $: showsProgress = Number(event?.attendance?.total) > 1;
+  $: showPrimary = Boolean(event?.primaryLabel);
+  // Una baja que ya no procede no se muestra como botón deshabilitado.
+  $: showSecondary = Boolean(event?.secondaryLabel) && !event?.secondaryDisabled;
+  $: showAvailability = Boolean(event?.availabilityLabel) && !showsProgress;
 
   function handlePrimary() {
     if (!event) return;
@@ -133,25 +140,31 @@
           </div>
 
           {#if event.aboutText}
-            <div class="mt-5 pb-6">
+            <div class="mt-5">
               <div class="text-sm font-bold">{event.aboutTitle || "Acerca del evento"}</div>
               <p class="mt-2 text-sm leading-relaxed text-muted-foreground">
                 {event.aboutText}
               </p>
             </div>
-          {:else}
-            <div class="pb-6"></div>
           {/if}
+
+          {#if showsProgress}
+            <div class="mt-5 rounded-2xl border bg-white p-4" data-testid="sheet-attendance">
+              <AttendanceProgress attendance={event.attendance} sessions={event.sessions} hoursValue={event.hoursValue} />
+            </div>
+          {/if}
+
+          <div class="pb-6"></div>
         </div>
 
         <!-- Footer sticky (no se corta el botón) -->
+        {#if showPrimary || showSecondary || showAvailability}
         <div class="shrink-0 border-t bg-background/95 px-5 pb-[calc(12px+env(safe-area-inset-bottom))] pt-3 backdrop-blur">
-          {#if event.secondaryLabel}
+          {#if showPrimary && showSecondary}
             <div class="grid grid-cols-2 gap-2">
               <Button
                 variant="outline"
                 class="h-12 w-full rounded-2xl text-base font-semibold"
-                disabled={event.secondaryDisabled}
                 onclick={handleSecondary}
               >
                 {event.secondaryLabel}
@@ -162,27 +175,36 @@
                 disabled={event.primaryDisabled}
                 onclick={handlePrimary}
               >
-                {event.primaryLabel || "Inscribirme ahora"}
+                {event.primaryLabel}
                 <ArrowRight class="ml-2 h-4 w-4" />
               </Button>
             </div>
-          {:else}
+          {:else if showSecondary}
+            <Button
+              variant="outline"
+              class="h-12 w-full rounded-2xl text-base font-semibold"
+              onclick={handleSecondary}
+            >
+              {event.secondaryLabel}
+            </Button>
+          {:else if showPrimary}
             <Button
               class="h-12 w-full rounded-2xl text-base font-semibold"
               disabled={event.primaryDisabled}
               onclick={handlePrimary}
             >
-              {event.primaryLabel || "Inscribirme ahora"}
+              {event.primaryLabel}
               <ArrowRight class="ml-2 h-4 w-4" />
             </Button>
           {/if}
 
-          {#if event.availabilityLabel}
+          {#if showAvailability}
             <div class="mt-2 text-center text-[11px] text-muted-foreground">
               {event.availabilityLabel}
             </div>
           {/if}
         </div>
+        {/if}
       </div>
     {/if}
   </Dialog.Content>

@@ -29,12 +29,24 @@
 	import { Switch } from '$lib/components/ui/switch';
 	import AfcHoursSection from '$lib/components/AfcHoursSection.svelte';
 	import PolicyHelpTooltip from '$lib/components/PolicyHelpTooltip.svelte';
+	import EventSessionsEditor from '$lib/components/EventSessionsEditor.svelte';
+	import {
+		ATTENDANCE_PERCENT_RANGE,
+		sessionRowsFromEvent,
+		sessionRowsToPayload,
+		sortSessionRows,
+		sessionDaysFromRows,
+		sessionDaysFromRange,
+		describeAttendanceRule,
+		validateSessionRows
+	} from '$lib/utils/eventSessions.js';
 	import { afcCatalog, ensureAfcCatalog } from '$lib/stores/afcCatalog.js';
 	import {
 		afcStateFromEvent,
 		buildAfcValuationPayload,
 		createAfcState,
 		eventGrantsAfcHours,
+		getAfcSelection,
 		validateAfcForSave
 	} from '$lib/utils/afcHoursForm.js';
 
@@ -57,6 +69,10 @@
 	let afcEvent = null;
 	let afcError = '';
 	let hasAttendance = false;
+	$: canReschedule = hasAttendance && sessionMode === 'multi' && sessionRows.some((row) => row.locked);
+	let sessionRows = [];
+	let attendancePercent = ATTENDANCE_PERCENT_RANGE.default;
+	let sessionsError = '';
 
 	let form = {
 		title: '',
@@ -165,6 +181,10 @@
 		afcHoursEnabled = eventGrantsAfcHours(ev);
 		afcError = '';
 		hasAttendance = Boolean(ev?.has_attendance);
+		const rows = sessionRowsFromEvent(ev?.sessions);
+		sessionRows = rows;
+		attendancePercent = Number(ev?.min_attendance_percent) || ATTENDANCE_PERCENT_RANGE.default;
+		sessionsError = '';
 	}
 
 	function buildSingleSession(startsAtIso, endsAtIso) {
@@ -180,14 +200,20 @@
 	}
 
 	function buildPayload() {
-		const startsAtIso = localDatetimeToIso(form.startsAt);
-		const endsAtIso = localDatetimeToIso(form.endsAt);
+		const multiSessions =
+			sessionMode === 'multi'
+				? sessionRowsToPayload(sessionRows).filter((session) => session.starts_at && session.ends_at)
+				: null;
+		const startsAtIso = multiSessions ? (multiSessions[0]?.starts_at ?? null) : localDatetimeToIso(form.startsAt);
+		const endsAtIso = multiSessions
+			? (multiSessions[multiSessions.length - 1]?.ends_at ?? null)
+			: localDatetimeToIso(form.endsAt);
 		const afcValuation =
 			hasAttendance || !afcHoursEnabled
 				? null
 				: buildAfcValuationPayload(afcState, {
 						catalog: $afcCatalog.types,
-						defaultDate: String(form.startsAt || '').slice(0, 10)
+						defaultDate: eventStartDate
 					});
 		return {
 			title: form.title?.trim(),
@@ -219,7 +245,14 @@
 							form.geoStrictAccuracyM === '' ? null : Number(form.geoStrictAccuracyM)
 					}
 					: null,
-			sessions: hasAttendance ? undefined : buildSingleSession(startsAtIso, endsAtIso)
+			sessions: hasAttendance
+				? canReschedule
+					? multiSessions
+					: undefined
+				: (multiSessions ?? buildSingleSession(startsAtIso, endsAtIso)),
+			...(hasAttendance
+				? {}
+				: { min_attendance_percent: multiSessions && multiSessions.length > 1 ? Number(attendancePercent) : 100 })
 		};
 	}
 
@@ -229,6 +262,9 @@
 		if (!hasAttendance) {
 			const scheduleError = validateSchedule(payload);
 			if (scheduleError) return scheduleError;
+		} else if (canReschedule) {
+			sessionsError = validateSessionRows(sessionRows, { allowPast: true });
+			if (sessionsError) return sessionsError;
 		}
 		if (payload.capacity_enabled) {
 			if (!Number.isInteger(payload.capacity) || payload.capacity <= 0) {
@@ -242,6 +278,11 @@
 	}
 
 	function validateSchedule(payload) {
+		sessionsError = '';
+		if (sessionMode === 'multi' && (payload.status === 'published' || sessionRows.length)) {
+			sessionsError = validateSessionRows(sessionRows);
+			if (sessionsError) return sessionsError;
+		}
 		if (payload.status === 'published' && (!payload.starts_at || !payload.ends_at)) {
 			return 'Para publicar, captura inicio y fin del evento.';
 		}
@@ -258,7 +299,7 @@
 		const afcValidation = validateAfcForSave(afcState, {
 			catalog: $afcCatalog.types,
 			status: payload.status,
-			defaultDate: String(form.startsAt || '').slice(0, 10),
+			defaultDate: eventStartDate,
 			legacyHours: legacyAfcHours
 		});
 		afcError = afcValidation.message;
@@ -268,6 +309,11 @@
 	$: lockedStatusValues = hasAttendance
 		? ['draft', 'published'].filter((value) => value !== afcEvent?.status)
 		: [];
+	// La actividad AFC define si el evento es de una o de varias sesiones.
+	$: sessionMode =
+		afcHoursEnabled && getAfcSelection(afcState, $afcCatalog.types).type?.multi_session ? 'multi' : 'single';
+	$: eventStartDate =
+		sessionMode === 'multi' ? sortSessionRows(sessionRows)[0]?.date || '' : String(form.startsAt || '').slice(0, 10);
 	// Un evento guardado sin horas AFC (0 hrs) no tiene horas previas que conservar al reactivarlas.
 	$: legacyAfcHours =
 		afcEvent?.afc_valuation || !eventGrantsAfcHours(afcEvent) ? null : (afcEvent?.hours_value ?? null);
@@ -296,7 +342,7 @@
 
 			const res = await adminEventsApi.getEventById(eventId);
 			const ev = res?.event || res?.data || res;
-			if (ev?.id || ev?.title) applyEventToForm(ev);
+			if (ev?.id || ev?.title) applyEventToForm({ ...ev, sessions: res?.sessions ?? ev?.sessions });
 		} catch (e) {
 			if (!form.title) {
 				loadError = e?.message || 'No se pudo cargar el evento para edición.';
@@ -350,7 +396,8 @@
 		<CardContent class="space-y-4 p-5">
 			{#if hasAttendance}
 				<div class="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-					Este evento ya tiene asistencias registradas. No se pueden cambiar sus fechas ni sus horas AFC.
+					Este evento ya tiene asistencias registradas. No se pueden cambiar sus horas AFC ni las sesiones con
+					asistencias; en eventos de varias sesiones puedes reprogramar las demás.
 					Para corregir horas de un alumno usa el ajuste manual en Usuarios.
 				</div>
 			{/if}
@@ -394,16 +441,25 @@
 				</div>
 			{/if}
 
-			<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-				<div>
-					<div class="text-sm font-semibold text-blue-600">Inicio</div>
-					<Input class="mt-2 h-11 rounded-2xl" type="datetime-local" bind:value={form.startsAt} disabled={hasAttendance} />
+			<EventSessionsEditor
+				mode={sessionMode}
+				bind:rows={sessionRows}
+				bind:attendancePercent
+				idPrefix="edit-page-sessions"
+				disabled={hasAttendance && !canReschedule}
+				error={sessionsError}
+			>
+				<div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
+					<div>
+						<div class="text-sm font-semibold text-blue-600">Inicio</div>
+						<Input class="mt-2 h-11 rounded-2xl" type="datetime-local" bind:value={form.startsAt} disabled={hasAttendance} />
+					</div>
+					<div>
+						<div class="text-sm font-semibold text-blue-600">Fin</div>
+						<Input class="mt-2 h-11 rounded-2xl" type="datetime-local" bind:value={form.endsAt} disabled={hasAttendance} />
+					</div>
 				</div>
-				<div>
-					<div class="text-sm font-semibold text-blue-600">Fin</div>
-					<Input class="mt-2 h-11 rounded-2xl" type="datetime-local" bind:value={form.endsAt} disabled={hasAttendance} />
-				</div>
-			</div>
+			</EventSessionsEditor>
 
 			<div class="flex items-center justify-between rounded-2xl bg-slate-50 px-4 py-3">
 				<div>
@@ -418,11 +474,16 @@
 				<AfcHoursSection
 					bind:state={afcState}
 					bind:enabled={afcHoursEnabled}
+					multiSession={sessionMode === 'multi'}
+					sessionDays={sessionMode === 'multi'
+						? sessionDaysFromRows(sessionRows)
+						: sessionDaysFromRange(localDatetimeToIso(form.startsAt), localDatetimeToIso(form.endsAt))}
+					attendanceRule={sessionRows.length > 1 ? describeAttendanceRule(Number(attendancePercent), sessionRows.length) : ''}
 					catalog={$afcCatalog.types}
 					catalogStatus={$afcCatalog.status === 'idle' ? 'loading' : $afcCatalog.status}
 					catalogError={$afcCatalog.error}
 					idPrefix="edit-page-afc"
-					defaultDate={String(form.startsAt || '').slice(0, 10)}
+					defaultDate={eventStartDate}
 					{eventId}
 					legacyHours={legacyAfcHours}
 					error={afcError}
@@ -536,12 +597,6 @@
 					<Input class="h-11 rounded-2xl" type="number" min="0" placeholder="Precisión estricta (m)" bind:value={form.geoStrictAccuracyM} />
 				</div>
 			{/if}
-
-			<!-- Sesiones adicionales temporalmente deshabilitadas.
-				La edición enviará una única sesión principal con inicio/fin del evento. -->
-			<!--<div class="rounded-2xl border bg-slate-50 px-4 py-3 text-xs text-muted-foreground">
-				Este evento usa una sola sesión principal automática.
-			</div>-->
 
 			<Button class="h-12 w-full rounded-2xl bg-blue-600 text-white hover:bg-blue-700" on:click={submitEdit} disabled={loading || submitting}>
 				{submitting ? 'Guardando cambios...' : 'Guardar cambios'}

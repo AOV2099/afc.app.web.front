@@ -313,6 +313,9 @@ export const myRegistrationsApi = {
 		return apiFetch(`/api/me/registrations${toQueryString(params)}`, {
 			method: 'GET'
 		});
+	},
+	calendar() {
+		return apiFetch('/api/me/calendar', { method: 'GET' });
 	}
 };
 

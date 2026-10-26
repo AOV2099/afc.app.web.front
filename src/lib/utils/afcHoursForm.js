@@ -33,8 +33,21 @@ export function createAfcState(overrides = {}) {
 	};
 }
 
-export function getAfcTypesForOrigin(catalog, origin) {
-	return (Array.isArray(catalog) ? catalog : []).filter((type) => type.origin === origin && type.is_active !== false);
+export function getAfcTypesForOrigin(catalog, origin, { multiSession = false } = {}) {
+	return (Array.isArray(catalog) ? catalog : []).filter(
+		(type) => type.origin === origin && type.is_active !== false && (!multiSession || type.multi_session === true)
+	);
+}
+
+/** Las horas efectivas de los cursos son la duración de cada sesión capturada en Fecha y Lugar. */
+export function syncCourseDaysWithSessions(state, sessionDays) {
+	const days = (Array.isArray(sessionDays) ? sessionDays : []).filter((day) => day?.date);
+	const courseDays = days.length
+		? days.map((day) => ({ date: day.date, effective_hours: day.hours ? String(day.hours) : '' }))
+		: [{ date: '', effective_hours: '' }];
+	const unchanged =
+		state.courseDayMode === 'multiple' && JSON.stringify(state.courseDays) === JSON.stringify(courseDays);
+	return unchanged ? state : { ...state, courseDayMode: 'multiple', courseDays };
 }
 
 // Cambiar el tipo limpia el supuesto, las entradas y el archivo.

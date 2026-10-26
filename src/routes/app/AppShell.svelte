@@ -6,8 +6,9 @@
 	import { Avatar, AvatarFallback, AvatarImage } from '$lib/components/ui/avatar';
 	import { authApi, clearClientRole } from '$lib/services/api';
 	import { isNavigationPathActive, isNavigationPathExact } from '$lib/utils/navigation.js';
+	import { panelIn } from '$lib/utils/motion.js';
 	import { clearCurrentUser } from '../../routes/store';
-	import { Home, Calendar, History as HistoryIcon, User, LogOut, Menu } from 'lucide-svelte';
+	import { Home, Calendar, CalendarCheck, History as HistoryIcon, User, LogOut, Menu } from 'lucide-svelte';
 
 	export let user = null;
 	export let title = 'AFC Aragón';
@@ -15,6 +16,7 @@
 	const NAV = [
 		{ key: 'home', label: 'Inicio', path: '/app/home', icon: Home },
 		{ key: 'explore', label: 'Explorar', path: '/app/explore', icon: Calendar },
+		{ key: 'calendar', label: 'Mi calendario', path: '/app/calendar', icon: CalendarCheck },
 		{ key: 'history', label: 'Historial', path: '/app/history', icon: HistoryIcon },
 		{ key: 'account', label: 'Perfil', path: '/app/account', icon: User }
 	];
@@ -237,7 +239,13 @@
 		</button>
 	</aside>
 
-	<main class="app-main"><slot /></main>
+	<main class="app-main">
+		{#key $page.url.pathname}
+			<div in:panelIn>
+				<slot />
+			</div>
+		{/key}
+	</main>
 </div>
 
 <style>

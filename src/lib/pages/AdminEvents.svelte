@@ -21,10 +21,8 @@
     normalizeEventCategory,
   } from "$lib/catalogs/eventCategories";
   import { getEventCategoryIcon } from "$lib/catalogs/eventCategoryIcons";
-  import { getEventCategoryStyleClasses } from "$lib/stores/eventCategoryStyles";
-  import { DEFAULT_EVENT_STATUS_FILTER, EVENT_COVER_HINT, eventStatusesQueryValue, isPastEvent } from "$lib/utils/events.js";
+  import { DEFAULT_EVENT_STATUS_FILTER, EVENT_COVER_HINT, eventStatusesQueryValue } from "$lib/utils/events.js";
   import EventStatusMultiSelect from "$lib/components/EventStatusMultiSelect.svelte";
-  import { Card, CardContent } from "$lib/components/ui/card";
   import { Badge } from "$lib/components/ui/badge";
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
@@ -34,6 +32,17 @@
   import * as Dialog from "$lib/components/ui/dialog";
   import AfcHoursSection from "$lib/components/AfcHoursSection.svelte";
   import PolicyHelpTooltip from "$lib/components/PolicyHelpTooltip.svelte";
+  import EventSessionsEditor from "$lib/components/EventSessionsEditor.svelte";
+  import {
+    ATTENDANCE_PERCENT_RANGE,
+    sessionRowsFromEvent,
+    sessionRowsToPayload,
+    sortSessionRows,
+    sessionDaysFromRows,
+    sessionDaysFromRange,
+    describeAttendanceRule,
+    validateSessionRows,
+  } from "$lib/utils/eventSessions.js";
   import { afcCatalog, ensureAfcCatalog } from "$lib/stores/afcCatalog.js";
   import {
     afcStateFromEvent,
@@ -42,12 +51,13 @@
     createAfcState,
     describeAfcEventHours,
     eventGrantsAfcHours,
+    getAfcSelection,
     validateAfcForSave,
   } from "$lib/utils/afcHoursForm.js";
-  import { CalendarDays, LayoutGrid, List, MapPin, Plus, User } from "lucide-svelte";
+  import { LayoutGrid, List, Plus, User } from "lucide-svelte";
+  import EventCard from "$lib/components/EventCard.svelte";
+  import { mapEventToCard } from "$lib/utils/eventCards.js";
 
-  const FALLBACK_IMAGE =
-    "https://gaceta.cch.unam.mx/sites/default/files/styles/imagen_articulos_1920x1080/public/2020-07/video_mensaje_1.jpg?h=d1cb525d&itok=4PYz5F61";
   const minimumEventDatetime = (() => {
     const now = new Date();
     const offset = now.getTimezoneOffset() * 60_000;
@@ -75,6 +85,11 @@
   let editAfcEvent = null;
   let editAfcError = "";
   let editHasAttendance = false;
+  $: editCanReschedule =
+    editHasAttendance && editSessionMode === "multi" && editSessionRows.some((row) => row.locked);
+  let editSessionRows = [];
+  let editAttendancePercent = ATTENDANCE_PERCENT_RANGE.default;
+  let editSessionsError = "";
 
   const VIEW_STORAGE_KEY = "afc.adminEvents.view";
   const EMPTY_BULK_CHANGES = {
@@ -168,34 +183,8 @@
     });
   }
 
-  function eventImage(ev) {
-    return (
-      ev?.coverImageUrl ||
-      ev?.cover_image_url ||
-      ev?.image_url ||
-      ev?.attributes?.cover_image_url ||
-      ev?.attributes?.image_url ||
-      FALLBACK_IMAGE
-    );
-  }
-
-  function eventLocation(ev) {
-    return ev?.location || ev?.attributes?.location || "Sin ubicación";
-  }
-
   function eventCategory(ev) {
     return getEventCategoryMeta(ev?.category).label.toUpperCase();
-  }
-
-  function eventCategoryPaletteClass(ev) {
-    const categoryMeta = getEventCategoryMeta(ev?.category);
-    const style = getEventCategoryStyleClasses(categoryMeta?.value || "general");
-    return `${style.bgClass} ${style.colorClass}`;
-  }
-
-  function eventCategoryIcon(ev) {
-    const categoryMeta = getEventCategoryMeta(ev?.category);
-    return getEventCategoryIcon(categoryMeta.iconKey);
   }
 
   function eventOrganizer(ev) {
@@ -240,6 +229,16 @@
 
   function isCareerRestricted(ev) {
     return ev?.can_manage === false;
+  }
+
+  function adminEventBadges(ev) {
+    const badges = [{ label: catalogLabel(EVENT_STATUS_CATALOG, ev.status) }];
+    if (isCareerRestricted(ev) && ev.owner_career_name) {
+      badges.push({ label: ev.owner_career_name, className: "bg-slate-700 text-white hover:bg-slate-700" });
+    }
+    const afcLabel = describeAfcEventHours(ev);
+    if (afcLabel) badges.push({ label: afcLabel, className: "bg-amber-50 text-amber-800 hover:bg-amber-50" });
+    return badges;
   }
 
   function isBlank(value) {
@@ -310,6 +309,8 @@
       if (preview.isCommittee) {
         return "Las actividades del Comité de Carrera requieren dictamen; capáturalas evento por evento.";
       }
+      // Las horas de los cursos las calcula el servidor con el horario de cada evento.
+      if (preview.isCourseDuration) return "";
       const validation = validateAfcForSave(bulkAfcState, {
         catalog: $afcCatalog.types,
         status: bulkChanges.status || "draft",
@@ -341,7 +342,7 @@
     if (bulkAfcEnabled && !bulkAfcHoursEnabled) {
       payload.afc_hours_enabled = false;
     } else if (bulkAfcEnabled) {
-      // La fecha de cada evento se usa para los cursos de una sola jornada; la evidencia va evento por evento.
+      // La evidencia va evento por evento; las horas de los cursos las calcula el servidor con cada horario.
       const afcValuation = buildAfcValuationPayload(bulkAfcState, {
         catalog: $afcCatalog.types,
         defaultDate: eventDateKey(ev),
@@ -530,6 +531,10 @@
     editAfcHoursEnabled = eventGrantsAfcHours(ev);
     editAfcError = "";
     editHasAttendance = Boolean(ev?.has_attendance);
+    const sessionRows = sessionRowsFromEvent(ev?.sessions);
+    editSessionRows = sessionRows;
+    editAttendancePercent = Number(ev?.min_attendance_percent) || ATTENDANCE_PERCENT_RANGE.default;
+    editSessionsError = "";
   }
 
   function extractStaffCredentials(eventData) {
@@ -657,14 +662,20 @@
   }
 
   function buildUpdatePayload() {
-    const startsAt = localDatetimeToIso(editForm.startsAt);
-    const endsAt = localDatetimeToIso(editForm.endsAt);
+    const multiSessions =
+      editSessionMode === "multi"
+        ? sessionRowsToPayload(editSessionRows).filter((session) => session.starts_at && session.ends_at)
+        : null;
+    const startsAt = multiSessions ? (multiSessions[0]?.starts_at ?? null) : localDatetimeToIso(editForm.startsAt);
+    const endsAt = multiSessions
+      ? (multiSessions[multiSessions.length - 1]?.ends_at ?? null)
+      : localDatetimeToIso(editForm.endsAt);
     const afcValuation =
       editHasAttendance || !editAfcHoursEnabled
         ? null
         : buildAfcValuationPayload(editAfcState, {
             catalog: $afcCatalog.types,
-            defaultDate: String(editForm.startsAt || "").slice(0, 10),
+            defaultDate: editStartDate,
           });
     const cancelDeadline =
       editForm.cancelPolicy === "free_until_deadline"
@@ -716,7 +727,14 @@
                   : Number(editForm.geoStrictAccuracyM),
             }
           : null,
-      sessions: editHasAttendance ? undefined : buildSingleSession(startsAt, endsAt, null),
+      sessions: editHasAttendance
+        ? editCanReschedule
+          ? multiSessions
+          : undefined
+        : (multiSessions ?? buildSingleSession(startsAt, endsAt, null)),
+      ...(editHasAttendance
+        ? {}
+        : { min_attendance_percent: multiSessions && multiSessions.length > 1 ? Number(editAttendancePercent) : 100 }),
       ...(normalizeStaffUserId(editSelectedStaffUserId) &&
       normalizeStaffUserId(editSelectedStaffUserId) !==
         normalizeStaffUserId(editOriginalStaffUserId)
@@ -735,6 +753,9 @@
     if (!editHasAttendance) {
       const scheduleError = validateEditSchedule(payload);
       if (scheduleError) return scheduleError;
+    } else if (editCanReschedule) {
+      editSessionsError = validateSessionRows(editSessionRows, { allowPast: true });
+      if (editSessionsError) return editSessionsError;
     }
     if (payload.geo_enforced && !payload.geo) {
       return "Si activas geocerca, captura latitud y longitud.";
@@ -759,6 +780,11 @@
   }
 
   function validateEditSchedule(payload) {
+    editSessionsError = "";
+    if (editSessionMode === "multi" && (payload.status === "published" || editSessionRows.length)) {
+      editSessionsError = validateSessionRows(editSessionRows);
+      if (editSessionsError) return editSessionsError;
+    }
     if (payload.status === "published" && (!payload.starts_at || !payload.ends_at)) {
       return "Para publicar, captura inicio y fin del evento.";
     }
@@ -781,7 +807,7 @@
     const afcValidation = validateAfcForSave(editAfcState, {
       catalog: $afcCatalog.types,
       status: payload.status,
-      defaultDate: String(editForm.startsAt || "").slice(0, 10),
+      defaultDate: editStartDate,
       legacyHours: editLegacyAfcHours,
     });
     editAfcError = afcValidation.ok ? "" : afcValidation.message;
@@ -791,6 +817,13 @@
   $: lockedStatusValues = editHasAttendance
     ? ["draft", "published"].filter((value) => value !== editAfcEvent?.status)
     : [];
+  // La actividad AFC define si el evento es de una o de varias sesiones.
+  $: editSessionMode =
+    editAfcHoursEnabled && getAfcSelection(editAfcState, $afcCatalog.types).type?.multi_session ? "multi" : "single";
+  $: editStartDate =
+    editSessionMode === "multi"
+      ? sortSessionRows(editSessionRows)[0]?.date || ""
+      : String(editForm.startsAt || "").slice(0, 10);
   // Un evento guardado sin horas AFC (0 hrs) no tiene horas previas que conservar al reactivarlas.
   $: editLegacyAfcHours =
     editAfcEvent?.afc_valuation || !eventGrantsAfcHours(editAfcEvent) ? null : editAfcEvent?.hours_value ?? null;
@@ -822,7 +855,7 @@
       const res = await adminEventsApi.getEventById(selectedEventId);
       const fullEvent = res?.event || res?.data || res;
       if (fullEvent?.id || fullEvent?.title) {
-        applyEventToForm(fullEvent);
+        applyEventToForm({ ...fullEvent, sessions: res?.sessions ?? fullEvent?.sessions });
       }
     } catch {
       // Si no existe endpoint de detalle, mantenemos datos de lista.
@@ -1102,79 +1135,16 @@
   {:else}
   <div class="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
     {#each events as ev (ev.id)}
-      <Card
-        class={`overflow-hidden rounded-2xl border pt-0 transition ${isCareerRestricted(ev) ? 'pointer-events-none cursor-not-allowed border-slate-300 bg-slate-100 opacity-60 grayscale select-none' : 'cursor-pointer hover:shadow-md'} ${isPastEvent(ev) ? 'border-slate-300 bg-slate-100 opacity-60 grayscale' : ''}`}
-        data-past={isPastEvent(ev) ? "true" : undefined}
-        data-career-disabled={isCareerRestricted(ev) ? "true" : undefined}
-        onclick={() => openEditDialog(ev)}
-        onkeydown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            openEditDialog(ev);
-          }
-        }}
-        role="button"
-        aria-disabled={isCareerRestricted(ev)}
-        tabindex={isCareerRestricted(ev) ? "-1" : "0"}
-      >
-        <div
-          class="aspect-[2/1] w-full bg-muted"
-          style:background-image={`url('${eventImage(ev)}')`}
-          style:background-size="cover"
-          style:background-position="center"
-        ></div>
-        <CardContent class="space-y-2 p-4">
-          <div class="flex items-center justify-between gap-2">
-            <Badge class={`rounded-full ${eventCategoryPaletteClass(ev)}`}>
-              <span class="inline-flex items-center gap-1">
-                <svelte:component this={eventCategoryIcon(ev)} class="h-3.5 w-3.5" />
-                <span>{eventCategory(ev)}</span>
-              </span>
-            </Badge>
-            <Badge
-              class="rounded-full bg-slate-100 text-slate-700 hover:bg-slate-100"
-              >{catalogLabel(EVENT_STATUS_CATALOG, ev.status)}</Badge
-            >
-          </div>
-
-          {#if isCareerRestricted(ev) && ev.owner_career_name}
-            <Badge class="rounded-full bg-slate-700 text-white hover:bg-slate-700">
-              {ev.owner_career_name}
-            </Badge>
-          {/if}
-
-          {#if describeAfcEventHours(ev)}
-            <Badge class="rounded-full bg-amber-50 text-amber-800 hover:bg-amber-50">
-              {describeAfcEventHours(ev)}
-            </Badge>
-          {/if}
-
-          <div class="line-clamp-2 text-lg font-semibold leading-tight">
-            {ev.title}
-          </div>
-
-          <div class="space-y-1 text-sm text-muted-foreground">
-            <div class="flex items-center gap-2">
-              <CalendarDays class="h-4 w-4" />
-              <span>{formatDate(ev.starts_at)}</span>
-            </div>
-            <div class="flex items-center gap-2">
-              <MapPin class="h-4 w-4" />
-              <span>{eventLocation(ev)}</span>
-            </div>
-            <div class="flex items-center gap-2">
-              <User class="h-4 w-4" />
-              <span>{eventOrganizer(ev)}</span>
-            </div>
-          </div>
-
-          <div class="pt-1">
-            <Badge class="rounded-full bg-slate-100 text-slate-700 hover:bg-slate-100">
-              {getEventAvailabilityLabel(ev)}
-            </Badge>
-          </div>
-
-          <div class="pt-2">
+      <div class="flex" data-career-disabled={isCareerRestricted(ev) ? "true" : undefined}>
+        <EventCard
+          event={mapEventToCard(ev)}
+          allowPast
+          disabled={isCareerRestricted(ev)}
+          badges={adminEventBadges(ev)}
+          availabilityLabel={getEventAvailabilityLabel(ev)}
+          onClick={() => openEditDialog(ev)}
+        >
+          <svelte:fragment slot="footer">
             <Button
               class="w-full rounded-xl bg-blue-600 text-white hover:bg-blue-700"
               disabled={isCareerRestricted(ev)}
@@ -1182,9 +1152,9 @@
             >
               Ver métricas
             </Button>
-          </div>
-        </CardContent>
-      </Card>
+          </svelte:fragment>
+        </EventCard>
+      </div>
     {/each}
   </div>
   {/if}
@@ -1241,7 +1211,8 @@
       {:else}
         {#if editHasAttendance}
           <div class="mb-3 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            Este evento ya tiene asistencias registradas. No se pueden cambiar sus fechas, horas AFC ni eliminarlo.
+            Este evento ya tiene asistencias registradas. No se pueden cambiar sus horas AFC, las sesiones con
+            asistencias ni eliminarlo; en eventos de varias sesiones puedes reprogramar las demás.
             Para corregir horas de un alumno usa el ajuste manual en Usuarios.
           </div>
         {/if}
@@ -1377,14 +1348,31 @@
             </div>
           {/if}
 
-          <div class="space-y-2">
-            <Label for="edit-event-start">Inicio *</Label>
-            <Input id="edit-event-start" name="starts_at" type="datetime-local" min={minimumEventDatetime} bind:value={editForm.startsAt} disabled={editHasAttendance} />
-          </div>
+          <div class="space-y-2 sm:col-span-2">
+            <EventSessionsEditor
+              mode={editSessionMode}
+              bind:rows={editSessionRows}
+              bind:attendancePercent={editAttendancePercent}
+              idPrefix="edit-event-sessions"
+              minDate={minimumEventDatetime.slice(0, 10)}
+              disabled={editHasAttendance && !editCanReschedule}
+              error={editSessionsError}
+            >
+              <div class="grid gap-4 sm:grid-cols-2">
+                <div class="space-y-2">
+                  <Label for="edit-event-start">Inicio *</Label>
+                  <Input id="edit-event-start" name="starts_at" type="datetime-local" min={minimumEventDatetime} bind:value={editForm.startsAt} disabled={editHasAttendance} />
+                </div>
 
-          <div class="space-y-2">
-            <Label for="edit-event-end">Fin *</Label>
-            <Input id="edit-event-end" name="ends_at" type="datetime-local" min={editForm.startsAt || minimumEventDatetime} bind:value={editForm.endsAt} disabled={editHasAttendance} />
+                <div class="space-y-2">
+                  <Label for="edit-event-end">Fin *</Label>
+                  <Input id="edit-event-end" name="ends_at" type="datetime-local" min={editForm.startsAt || minimumEventDatetime} bind:value={editForm.endsAt} disabled={editHasAttendance} />
+                </div>
+              </div>
+            </EventSessionsEditor>
+            {#if editHasAttendance}
+              <div class="text-xs text-muted-foreground">El evento ya tiene asistencias; sus fechas y sesiones no se pueden cambiar.</div>
+            {/if}
           </div>
 
           <div class="space-y-2 sm:col-span-2">
@@ -1406,11 +1394,16 @@
             <AfcHoursSection
               bind:state={editAfcState}
               bind:enabled={editAfcHoursEnabled}
+              multiSession={editSessionMode === "multi"}
+              sessionDays={editSessionMode === "multi"
+                ? sessionDaysFromRows(editSessionRows)
+                : sessionDaysFromRange(localDatetimeToIso(editForm.startsAt), localDatetimeToIso(editForm.endsAt))}
+              attendanceRule={editSessionRows.length > 1 ? describeAttendanceRule(Number(editAttendancePercent), editSessionRows.length) : ""}
               catalog={$afcCatalog.types}
               catalogStatus={$afcCatalog.status === "idle" ? "loading" : $afcCatalog.status}
               catalogError={$afcCatalog.error}
               idPrefix="edit-event-afc"
-              defaultDate={String(editForm.startsAt || "").slice(0, 10)}
+              defaultDate={editStartDate}
               eventId={selectedEventId}
               legacyHours={editLegacyAfcHours}
               error={editAfcError}
@@ -1581,15 +1574,6 @@
               />
             </div>
           {/if}
-
-          <!-- Sesiones adicionales temporalmente deshabilitadas.
-            La edición enviará una única sesión principal con inicio/fin del evento. -->
-          <div class="space-y-2 sm:col-span-2">
-            <Label>Sesión</Label>
-            <!--<div class="rounded-lg border bg-slate-50 px-3 py-2 text-xs text-muted-foreground">
-              Este evento usa una sola sesión principal automática.
-            </div>-->
-          </div>
         </div>
       {/if}
 
@@ -1761,7 +1745,7 @@
           <div>
             <div class="text-sm font-semibold text-slate-700">Horas AFC</div>
             <div class="text-xs text-muted-foreground">
-              Aplica la misma actividad a todos. Los cursos de una jornada usan la fecha de cada evento; el dictamen del
+              Aplica la misma actividad a todos. Los cursos toman las horas del horario de cada evento; el dictamen del
               Comité se adjunta evento por evento.
             </div>
           </div>
@@ -1775,6 +1759,8 @@
             catalogStatus={$afcCatalog.status === "idle" ? "loading" : $afcCatalog.status}
             catalogError={$afcCatalog.error}
             idPrefix="bulk-event-afc"
+            syncSessions={false}
+            courseHoursSource="se calculan con el horario de cada evento."
             defaultDate={new Date().toISOString().slice(0, 10)}
           />
         {/if}

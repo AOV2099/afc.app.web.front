@@ -8,6 +8,7 @@
   import * as Tooltip from '$lib/components/ui/tooltip/index.js';
   import { myHoursApi, publicEventsApi } from '$lib/services/api';
   import { createTicketQrDataUrl } from '$lib/services/qrCodeService';
+  import { panelIn, staggerDelay } from '$lib/utils/motion.js';
   import {
     EVENT_CATEGORY_OPTIONS,
     normalizeEventCategory as normalizeEventCategoryKey
@@ -404,7 +405,8 @@
       </Card>
     {/if}
 
-    {#each filteredItems as e (e.id)}
+    {#each filteredItems as e, i (e.id)}
+      <div in:panelIn|global={{ delay: staggerDelay(i) }}>
       <Card class="rounded-2xl border shadow-sm transition hover:shadow-md">
         <CardContent class="px-5 sm:px-6 py-0 sm:py-0">
           <div class="flex items-start justify-between gap-3">
@@ -449,6 +451,7 @@
           {/if}
         </CardContent>
       </Card>
+      </div>
     {/each}
   </div>
 

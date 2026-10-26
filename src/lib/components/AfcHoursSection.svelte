@@ -14,7 +14,9 @@
 		formatAfcHours,
 		formatAfcRange,
 		formatAfcScenarioOption,
-		getAfcTypesForOrigin
+		getAfcSelection,
+		getAfcTypesForOrigin,
+		syncCourseDaysWithSessions
 	} from '$lib/utils/afcHoursForm.js';
 	import { FileText, Upload } from 'lucide-svelte';
 
@@ -29,18 +31,31 @@
 	export let error = '';
 	export let disabled = false;
 	export let enabled = true;
+	// Eventos de varias sesiones (los define la actividad elegida).
+	export let multiSession = false;
+	/** Horario del evento (fecha y duración de cada sesión): de aquí salen las horas efectivas de los cursos. */
+	/** @type {{ date: string, hours: number }[]} */
+	export let sessionDays = [];
+	// En la edición masiva cada evento usa su propio horario, así que no hay sesiones que sincronizar.
+	export let syncSessions = true;
+	export let courseHoursSource = 'se calculan con el horario de las sesiones capturado en Fecha y Lugar.';
+	export let attendanceRule = '';
 
 	let fileInputEl;
 	let uploadStatus = 'idle';
 	let uploadError = '';
 
 	$: types = getAfcTypesForOrigin(catalog, state.origin);
+	// Va antes de `preview` para que el resumen use el estado ya ajustado en la misma actualización.
+	$: syncSessionCourseDays(state.typeKey, state.scenarioKey, catalog, sessionDays, syncSessions, disabled);
 	$: preview = computeAfcPreview(state, { catalog, defaultDate });
+
+	function syncSessionCourseDays(_typeKey, _scenarioKey, currentCatalog, days, shouldSync, isDisabled) {
+		if (!shouldSync || isDisabled || !getAfcSelection(state, currentCatalog).isCourseDuration) return;
+		const synced = syncCourseDaysWithSessions(state, days);
+		if (synced !== state) state = synced;
+	}
 	$: selectedType = preview.type;
-	$: effectiveTotal = state.courseDays.reduce((sum, day) => {
-		const value = Number(day?.effective_hours);
-		return Number.isFinite(value) && value >= 0 ? sum + value : sum;
-	}, 0);
 
 	const fieldClass =
 		'mt-2 h-11 w-full rounded-2xl border bg-background px-3 text-sm disabled:cursor-not-allowed disabled:opacity-60';
@@ -58,35 +73,6 @@
 		uploadStatus = 'idle';
 		uploadError = '';
 		if (fileInputEl) fileInputEl.value = '';
-	}
-
-	function setDayMode(mode) {
-		const first = state.courseDays[0] || { date: '', effective_hours: '' };
-		state = {
-			...state,
-			courseDayMode: mode,
-			courseDays:
-				mode === 'multiple'
-					? [{ date: first.date || defaultDate || '', effective_hours: first.effective_hours }]
-					: [{ date: '', effective_hours: first.effective_hours }]
-		};
-	}
-
-	function updateDay(index, field, value) {
-		state = {
-			...state,
-			courseDays: state.courseDays.map((day, i) => (i === index ? { ...day, [field]: value } : day))
-		};
-	}
-
-	function addDay() {
-		if (state.courseDays.length >= AFC_COURSE_RULES.maxDays) return;
-		state = { ...state, courseDays: [...state.courseDays, { date: '', effective_hours: '' }] };
-	}
-
-	function removeDay(index) {
-		if (state.courseDays.length <= 1) return;
-		state = { ...state, courseDays: state.courseDays.filter((_, i) => i !== index) };
 	}
 
 	function preventInvalidNumberKey(event) {
@@ -178,6 +164,11 @@
 					<option value={type.key}>{type.name} ({formatAfcRange(type)})</option>
 				{/each}
 			</select>
+			{#if multiSession}
+				<div class="mt-1 text-xs font-semibold text-violet-700" data-testid="afc-multi-session-hint">
+					Esta actividad se realiza en varias sesiones; captúralas en la sección de fechas.
+				</div>
+			{/if}
 		</div>
 
 		{#if !preview.isManual}
@@ -212,107 +203,11 @@
 	{/if}
 
 	{#if preview.isCourseDuration}
-		<div class="space-y-4 rounded-2xl border border-blue-100 bg-blue-50/40 p-4">
-			<p class="text-xs text-slate-700">
-				Captura las horas efectivas del curso o taller. Se acreditan al doble, con tope de {AFC_COURSE_RULES.maxAfcHoursPerDay} h AFC por jornada y {AFC_COURSE_RULES.maxAfcHoursTotal} h AFC en total.
-			</p>
-			<div role="radiogroup" aria-label="Número de jornadas" class="flex flex-wrap gap-2">
-				<button
-					type="button"
-					role="radio"
-					aria-checked={state.courseDayMode === 'single'}
-					class={`rounded-2xl px-3 py-1.5 text-sm font-semibold ${state.courseDayMode === 'single' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700 border'}`}
-					onclick={() => setDayMode('single')}
-					{disabled}
-				>
-					Una jornada
-				</button>
-				<button
-					type="button"
-					role="radio"
-					aria-checked={state.courseDayMode === 'multiple'}
-					class={`rounded-2xl px-3 py-1.5 text-sm font-semibold ${state.courseDayMode === 'multiple' ? 'bg-blue-600 text-white' : 'bg-white text-slate-700 border'}`}
-					onclick={() => setDayMode('multiple')}
-					{disabled}
-				>
-					Varias jornadas
-				</button>
+		<div class="rounded-2xl border border-blue-100 bg-blue-50/40 px-4 py-3 text-xs text-slate-700" data-testid="afc-course-hours-source">
+			<div class="font-semibold">Horas efectivas del curso o taller: {courseHoursSource}</div>
+			<div class="mt-1">
+				Se acreditan al doble, con tope de {AFC_COURSE_RULES.maxAfcHoursPerDay} h AFC por sesión y {AFC_COURSE_RULES.maxAfcHoursTotal} h AFC en total.
 			</div>
-
-			{#if state.courseDayMode === 'single'}
-				<div>
-					<label for={`${idPrefix}-course-hours`} class="text-sm font-semibold text-blue-600">Horas de duración del curso/taller</label>
-					<input
-						id={`${idPrefix}-course-hours`}
-						name="afc_course_effective_hours"
-						class={fieldClass}
-						type="number"
-						min="0"
-						max={AFC_COURSE_RULES.maxEffectiveHoursPerDay}
-						step="0.01"
-						inputmode="decimal"
-						autocomplete="off"
-						value={state.courseDays[0]?.effective_hours ?? ''}
-						oninput={(e) => updateDay(0, 'effective_hours', e.currentTarget.value)}
-						onkeydown={preventInvalidNumberKey}
-						{disabled}
-					/>
-					<div class="mt-1 text-xs text-muted-foreground">
-						Horas efectivas de formación documentadas, sin pausas. No son horas AFC.
-					</div>
-				</div>
-			{:else}
-				<div class="space-y-2">
-					<div class="text-sm font-semibold text-blue-600">Horas de duración del curso/taller por jornada</div>
-					{#each state.courseDays as day, index (index)}
-						<div class="grid grid-cols-[1fr_1fr_auto] items-end gap-2">
-							<div>
-								<label for={`${idPrefix}-day-date-${index}`} class="text-xs font-semibold text-slate-600">Jornada {index + 1}</label>
-								<input
-									id={`${idPrefix}-day-date-${index}`}
-									class={fieldClass}
-									type="date"
-									value={day.date}
-									oninput={(e) => updateDay(index, 'date', e.currentTarget.value)}
-									{disabled}
-								/>
-							</div>
-							<div>
-								<label for={`${idPrefix}-day-hours-${index}`} class="text-xs font-semibold text-slate-600">Horas efectivas</label>
-								<input
-									id={`${idPrefix}-day-hours-${index}`}
-									class={fieldClass}
-									type="number"
-									min="0"
-									max={AFC_COURSE_RULES.maxEffectiveHoursPerDay}
-									step="0.01"
-									inputmode="decimal"
-									autocomplete="off"
-									value={day.effective_hours}
-									oninput={(e) => updateDay(index, 'effective_hours', e.currentTarget.value)}
-									onkeydown={preventInvalidNumberKey}
-									{disabled}
-								/>
-							</div>
-							<Button
-								variant="outline"
-								class="h-11 rounded-2xl"
-								aria-label={`Quitar jornada ${index + 1}`}
-								onclick={() => removeDay(index)}
-								disabled={disabled || state.courseDays.length <= 1}
-							>
-								Quitar
-							</Button>
-						</div>
-					{/each}
-					<div class="flex items-center justify-between gap-2">
-						<Button variant="outline" class="h-9 rounded-xl" onclick={addDay} disabled={disabled || state.courseDays.length >= AFC_COURSE_RULES.maxDays}>
-							Agregar jornada
-						</Button>
-						<div class="text-xs text-slate-700">Total de horas efectivas: <span class="font-semibold">{formatAfcHours(effectiveTotal)}</span></div>
-					</div>
-				</div>
-			{/if}
 		</div>
 	{/if}
 
@@ -414,7 +309,12 @@
 				<div class="text-sm">Horas efectivas de formación: {preview.valuation.input_value}</div>
 				<div class="text-sm">Horas calculadas (× {AFC_COURSE_RULES.multiplier}, con topes): {preview.valuation.hours_before_rounding}</div>
 			{/if}
-			{#if preview.status === 'incomplete'}
+			{#if preview.status === 'incomplete' && preview.isCourseDuration && !syncSessions}
+				<div class="mt-1 text-sm font-semibold">Horas AFC asignadas: se calculan con el horario de cada evento</div>
+			{:else if preview.status === 'incomplete' && preview.isCourseDuration}
+				<div class="mt-1 text-sm font-semibold text-amber-800">Horas AFC asignadas: pendientes del horario</div>
+				<div class="mt-1 text-xs text-muted-foreground">Captura la fecha y el horario en Fecha y Lugar; mientras tanto, solo puede guardarse como borrador.</div>
+			{:else if preview.status === 'incomplete'}
 				<div class="mt-1 text-sm font-semibold text-amber-800">Horas AFC asignadas: pendientes de captura</div>
 				<div class="mt-1 text-xs text-muted-foreground">Mientras no se capturen, el evento solo puede guardarse como borrador.</div>
 			{:else}
@@ -423,6 +323,11 @@
 			{#if preview.valuation.method === 'percent_range'}
 				<div class="mt-2 text-xs text-muted-foreground">{AFC_FORMULA_HELP}</div>
 			{/if}
+		{/if}
+		{#if multiSession && attendanceRule}
+			<div class="mt-2 rounded-xl bg-blue-50 px-3 py-2 text-xs font-semibold text-blue-800" data-testid="afc-attendance-rule">
+				Solo se acreditan a quien cumpla la asistencia mínima: {attendanceRule}.
+			</div>
 		{/if}
 	</div>
 	{:else}

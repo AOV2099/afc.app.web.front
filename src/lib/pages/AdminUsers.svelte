@@ -513,8 +513,9 @@
 			const response = await adminUsersApi.commitHoursCsv(hoursImportId);
 			if (!response?.ok) throw new Error(response?.message || 'No se pudo completar la carga.');
 			const importedHours = Number(response.total_hours || 0);
+			const cappedRows = Number(response.capped_rows || 0);
 			toast.success(
-				importedHours > 0
+				importedHours > 0 && cappedRows === 0
 					? `Se han agregado ${importedHours.toLocaleString('es-MX', { maximumFractionDigits: 2 })} hrs en ${Number(response.adjusted || 0)} ajustes.`
 					: 'Procesado correctamente.'
 			);
@@ -892,8 +893,7 @@
 			hoursOpen = false;
 			const formatNumber = (value) => value.toLocaleString('es-MX', { maximumFractionDigits: 2 });
 			const message = `Se han agregado ${formatNumber(added)} hrs. Total: ${formatNumber(totalHours)} hrs.`;
-			if (!(added > 0)) toast.success('Procesado correctamente.');
-			else if (added < requested) toast.info(message);
+			if (!(added > 0) || added < requested) toast.success('Procesado correctamente.');
 			else toast.success(message);
 			hoursUser = null;
 			hoursForm = { hours: '', category: '', motive: '', requestId: '' };

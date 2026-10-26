@@ -6,6 +6,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import { Input } from '$lib/components/ui/input';
 	import AlertPreviewCard from '$lib/components/alerts/AlertPreviewCard.svelte';
+	import { panelIn, staggerDelay } from '$lib/utils/motion.js';
 	import { getEventCategoryMeta } from '$lib/catalogs/eventCategories';
 	import { getEventCategoryIcon } from '$lib/catalogs/eventCategoryIcons';
 
@@ -191,9 +192,11 @@
 		</Card>
 	{:else}
 		<div class="space-y-3">
-			{#each alerts as alert (alert.id)}
+			{#each alerts as alert, i (alert.id)}
 				{@const previewItem = mapAlertToPreviewItem(alert)}
-				<AlertPreviewCard item={previewItem} />
+				<div in:panelIn|global={{ delay: staggerDelay(i) }}>
+					<AlertPreviewCard item={previewItem} />
+				</div>
 			{/each}
 		</div>
 	{/if}

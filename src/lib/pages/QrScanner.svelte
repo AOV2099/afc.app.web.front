@@ -96,13 +96,22 @@
 	}
 
 	function formatScanMessage(res, fallback = 'Check-in procesado.') {
-		return (
+		const base =
 			res?.message ||
 			res?.reason ||
 			res?.result?.message ||
 			res?.checkin?.message ||
-			fallback
-		);
+			fallback;
+		const attendance = res?.attendance;
+		const parts = [base];
+		if (attendance?.total > 1) {
+			parts.push(`Asistencia ${attendance.attended} de ${attendance.total} (mínimo ${attendance.required})`);
+		}
+		// Si la meta AFC limitó las horas (o no sumó ninguna) no se muestra cuántas se acreditaron.
+		if (Number(res?.hours_credited) > 0 && !res?.hours_capped && attendance?.total > 1) {
+			parts.push(`Horas AFC acreditadas: ${Number(res.hours_credited)}`);
+		}
+		return parts.join(' · ');
 	}
 
 	function isDuplicateCheckinError(error) {
