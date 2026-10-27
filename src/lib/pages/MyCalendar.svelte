@@ -531,8 +531,8 @@
 </div>
 
 <Dialog.Root bind:open={dayDialogOpen}>
-	<Dialog.Content class="max-h-[85dvh] w-[min(94vw,560px)] overflow-y-auto rounded-2xl p-0" data-testid="calendar-day-dialog">
-		<div class="space-y-3 p-5">
+	<Dialog.Content class="max-h-[85dvh] w-[min(94vw,560px)] overflow-y-auto overflow-x-hidden rounded-2xl p-0" data-testid="calendar-day-dialog">
+		<div class="min-w-0 space-y-3 p-5">
 			<Dialog.Title class="text-lg font-semibold first-letter:uppercase">{selectedDateLabel}</Dialog.Title>
 			{#if !daySessions.length}
 				<div class="rounded-xl border border-dashed px-4 py-8 text-center text-sm text-muted-foreground">
