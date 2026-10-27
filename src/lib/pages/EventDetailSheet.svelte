@@ -29,11 +29,12 @@
 </script>
 
 <Dialog.Root bind:open >
+  <!-- Móvil: hoja inferior a todo lo ancho; desde sm: modal centrado. El cierre propio está en la portada. -->
   <Dialog.Content
-   class="fixed bottom-0 left-1/2 z-50 min-h-[75dvh] max-h-[95dvh] w-[min(92vw,420px)] -translate-x-1/2 rounded-t-md p-0 shadow-2xl outline-none pb-4">
+   showCloseButton={false}
+   class="inset-x-0 top-auto bottom-0 left-0 flex max-h-[92dvh] w-full max-w-none translate-x-0 translate-y-0 flex-col gap-0 overflow-hidden rounded-t-3xl rounded-b-none border-0 p-0 shadow-2xl outline-none sm:inset-x-auto sm:top-1/2 sm:bottom-auto sm:left-1/2 sm:max-h-[90dvh] sm:w-[min(92vw,440px)] sm:max-w-[440px] sm:-translate-x-1/2 sm:-translate-y-1/2 sm:rounded-3xl">
     {#if event}
-      <!-- Contenedor con alto máximo -->
-      <div class="flex h-full flex-col overflow-hidden rounded-t-md">
+      <div class="flex min-h-0 flex-1 flex-col overflow-hidden">
         <!-- Hero (siempre visible) -->
         <div class="relative shrink-0">
           {#if event.coverImageUrl}
