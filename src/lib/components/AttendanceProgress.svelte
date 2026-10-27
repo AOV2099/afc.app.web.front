@@ -6,6 +6,8 @@
 	/** @type {{ id: number|string, starts_at: string, ends_at: string, state: string }[]} */
 	export let sessions = [];
 	export let hoursValue = null;
+	// Solo encabezado y barra, para tarjetas.
+	export let compact = false;
 
 	$: meter = attendanceMeter(attendance);
 	$: release = describeHoursRelease(attendance, hoursValue);
@@ -25,7 +27,31 @@
 	}
 </script>
 
-{#if meter.total > 1}
+{#if meter.total > 1 && compact}
+	<div class="space-y-1.5 text-left" data-testid="attendance-progress">
+		<div class="flex items-baseline justify-between gap-2 text-xs font-semibold">
+			<span>Asistencia: {meter.attended} de {meter.total}</span>
+			<span class="text-blue-700">{meter.progressPercent} %</span>
+		</div>
+		<div class="relative">
+			<div
+				class="h-2 w-full overflow-hidden rounded-full bg-slate-200"
+				role="progressbar"
+				aria-valuemin="0"
+				aria-valuemax="100"
+				aria-valuenow={meter.progressPercent}
+				aria-label="Avance de asistencia"
+			>
+				<div class={`h-full rounded-full transition-all ${barClass}`} style={`width:${meter.progressPercent}%`}></div>
+			</div>
+			<div
+				class="absolute -top-0.5 h-3 w-0.5 bg-slate-900"
+				style={`left:calc(${meter.thresholdPercent}% - 1px)`}
+				title={`Mínimo ${meter.thresholdPercent} %`}
+			></div>
+		</div>
+	</div>
+{:else if meter.total > 1}
 	<div class="space-y-3 text-left" data-testid="attendance-progress">
 		<div class="flex items-baseline justify-between gap-2">
 			<div class="text-sm font-semibold">Asistencia: {meter.attended} de {meter.total} sesiones</div>

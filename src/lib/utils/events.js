@@ -61,3 +61,15 @@ export function isFutureEvent(event, now = Date.now()) {
 	const startsAt = new Date(rawStartsAt).getTime();
 	return Number.isFinite(startsAt) && startsAt > Number(now);
 }
+
+/** Elementos del día local más cercano, ordenados; los ya iniciados cuentan como hoy. */
+export function nearestDayItems(items, getStartMs, now = Date.now()) {
+	const dated = (items || [])
+		.map((item) => ({ item, ms: Math.max(Number(getStartMs(item)), Number(now)) }))
+		.filter(({ ms }) => Number.isFinite(ms))
+		.sort((a, b) => a.ms - b.ms);
+	if (!dated.length) return [];
+	const day = (ms) => new Date(ms).toDateString();
+	const nearest = day(dated[0].ms);
+	return dated.filter(({ ms }) => day(ms) === nearest).map(({ item }) => item);
+}

@@ -6,6 +6,7 @@
 	import { Avatar, AvatarFallback, AvatarImage } from '$lib/components/ui/avatar';
 	import { authApi, clearClientRole } from '$lib/services/api';
 	import { isNavigationPathActive, isNavigationPathExact } from '$lib/utils/navigation.js';
+	import { panelIn } from '$lib/utils/motion.js';
 	import {
 		Home,
 		User,
@@ -262,7 +263,11 @@
 	</aside>
 
 	<main class="admin-main">
-		<slot />
+		{#key $page.url.pathname}
+			<div in:panelIn>
+				<slot />
+			</div>
+		{/key}
 	</main>
 </div>
 

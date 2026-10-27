@@ -14,6 +14,7 @@
 	import { Input } from '$lib/components/ui/input';
 	import { Label } from '$lib/components/ui/label';
 	import { Badge } from '$lib/components/ui/badge';
+	import { panelIn, staggerDelay } from '$lib/utils/motion.js';
 	import { Switch } from '$lib/components/ui/switch';
 	import { Textarea } from '$lib/components/ui/textarea';
 	import * as Dialog from '$lib/components/ui/dialog';
@@ -324,11 +325,11 @@
 				<div class="text-sm text-muted-foreground">No hay alertas para mostrar.</div>
 			{:else}
 				<div class="space-y-3">
-					{#each alerts as alert (alert.id)}
+					{#each alerts as alert, i (alert.id)}
 						{@const categoryMeta = getAlertCategoryMeta(alert?.category)}
 						{@const categoryPalette = getAlertCategoryPalette(alert?.category)}
 						{@const categoryIcon = getEventCategoryIcon(categoryMeta.iconKey)}
-						<div class="rounded-xl border p-3">
+						<div class="rounded-xl border p-3" in:panelIn|global={{ delay: staggerDelay(i) }}>
 							<div class="flex flex-wrap items-center justify-between gap-2">
 								<div class="text-base font-semibold">{alert.title}</div>
 								<div class="flex items-center gap-2">

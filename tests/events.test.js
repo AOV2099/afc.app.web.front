@@ -4,10 +4,21 @@ import test from 'node:test';
 import {
 	isFutureEvent,
 	isPastEvent,
-	isVisibleToUser
+	isVisibleToUser,
+	nearestDayItems
 } from '../src/lib/utils/events.js';
 
 const NOW = Date.parse('2026-09-01T18:00:00.000Z');
+
+test('keeps only the events of the nearest day, in start order', () => {
+	const at = (iso) => ({ ms: Date.parse(iso) });
+	const later = at('2026-09-03T15:00:00.000Z');
+	const sameDayLate = at('2026-09-02T19:00:00.000Z');
+	const sameDayEarly = at('2026-09-02T15:00:00.000Z');
+	const result = nearestDayItems([later, sameDayLate, sameDayEarly, { ms: NaN }], (item) => item.ms, NOW);
+	assert.deepEqual(result, [sameDayEarly, sameDayLate]);
+	assert.deepEqual(nearestDayItems([], (item) => item.ms, NOW), []);
+});
 
 test('identifies events that ended at or before the current time', () => {
 	assert.equal(isPastEvent({ ends_at: '2026-09-01T17:59:59.000Z' }, NOW), true);

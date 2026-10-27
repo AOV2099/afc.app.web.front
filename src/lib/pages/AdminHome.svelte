@@ -6,9 +6,10 @@
 	import { Button } from '$lib/components/ui/button';
 	import { Badge } from '$lib/components/ui/badge';
 	import { adminEventsApi, adminRequestsApi } from '$lib/services/api';
-	import { isFutureEvent } from '$lib/utils/events.js';
+	import { isFutureEvent, nearestDayItems } from '$lib/utils/events.js';
 	import { mapEventToCard } from '$lib/utils/eventCards.js';
 	import EventCard from '$lib/components/EventCard.svelte';
+	import { panelIn, staggerDelay } from '$lib/utils/motion.js';
 	import { EVENT_STATUS_CATALOG, catalogLabel } from '../../routes/store';
 
 	import { Bell, CalendarDays, CalendarPlus2, ClipboardList, Eye, QrCode } from 'lucide-svelte';
@@ -58,7 +59,10 @@
 		}
 	];
 
-	$: upcomingEvents = (Array.isArray(events) ? events : []).filter((event) => isFutureEvent(event)).map((e) => {
+	$: upcomingEvents = nearestDayItems(
+		(Array.isArray(events) ? events : []).filter((event) => isFutureEvent(event)),
+		(event) => new Date(event?.starts_at).getTime()
+	).map((e) => {
 		const rawCapacity = e?.capacity ?? e?.attributes?.capacity ?? e?.cupo ?? e?.attributes?.cupo;
 		const capacityEnabled = e?.capacity_enabled;
 		const hasCapacityValue = rawCapacity !== undefined && rawCapacity !== null && rawCapacity !== '';
@@ -247,7 +251,8 @@
 
 		<!-- Stats -->
 		<section class="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2">
-            {#each stats as s (s.label)}
+            {#each stats as s, i (s.label)}
+            <div in:panelIn|global={{ delay: staggerDelay(i) }}>
             <Card class={`rounded-2xl border ${s.style.cardClass}`}>
                 <CardContent class="p-5">
 						<div class="flex items-start justify-between">
@@ -264,6 +269,7 @@
 						</div>
 					</CardContent>
 				</Card>
+				</div>
 			{/each}
 		</section>
 
@@ -286,7 +292,8 @@
 				{:else if !requests.length}
 					<div class="text-sm text-muted-foreground">Sin solicitudes pendientes.</div>
 				{/if}
-				{#each requests as r (r.id)}
+				{#each requests as r, i (r.id)}
+					<div in:panelIn|global={{ delay: staggerDelay(i) }}>
 					<Card class="rounded-3xl border bg-card text-card-foreground shadow-sm">
 						<CardContent class="p-5">
 							<div class="flex items-start justify-between gap-3">
@@ -354,6 +361,7 @@
 							</div>
 						</CardContent>
 					</Card>
+					</div>
 				{/each}
 			</div>
 		</section>
@@ -394,8 +402,9 @@
 				{:else if !upcomingEvents.length}
 					<div class="text-sm text-muted-foreground">No hay eventos para mostrar.</div>
 				{/if}
-				{#each upcomingEvents as e (e.id)}
+				{#each upcomingEvents as e, i (e.id)}
 					<EventCard
+						index={i}
 						event={e.card}
 						badges={e.badges}
 						disabled={e.isCareerRestricted}

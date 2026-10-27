@@ -4,16 +4,18 @@
 	import EventCard from '$lib/components/EventCard.svelte';
 	import EnrolledEventFooter from '$lib/components/EnrolledEventFooter.svelte';
 	import TicketDialog from '$lib/components/TicketDialog.svelte';
+	import UnsubscribeDialog from '$lib/components/UnsubscribeDialog.svelte';
 	import EventDetailSheet from '$lib/pages/EventDetailSheet.svelte';
 	import { myRegistrationsApi } from '$lib/services/api';
 	import {
 		SESSION_STATE_META,
 		attendancePreview,
+		canRequestUnsubscribe,
 		buildCalendarMonth,
 		describeAttendanceProgress,
 		sessionDisplayState
 	} from '$lib/utils/eventSessions.js';
-	import { formatEventSchedule, mapEventToCard } from '$lib/utils/eventCards.js';
+	import { formatEventSchedule, mapEventToCard, resolveEventImage } from '$lib/utils/eventCards.js';
 	import { panelIn } from '$lib/utils/motion.js';
 	import { ChevronLeft, ChevronRight } from 'lucide-svelte';
 
@@ -36,6 +38,19 @@
 	let selectedEvent = null;
 	let ticketDialogOpen = false;
 	let ticketEventId = null;
+	let unsubscribeDialogOpen = false;
+	let unsubscribeTarget = null;
+
+	function requestUnsubscribe(evt) {
+		if (evt?.secondaryAction !== 'request_unsubscribe' || evt?.secondaryDisabled) return;
+		unsubscribeTarget = { id: evt.id, title: evt.title };
+		unsubscribeDialogOpen = true;
+	}
+
+	async function afterUnsubscribe() {
+		sheetOpen = false;
+		await loadCalendar();
+	}
 
 	function localDateKey(value) {
 		const date = new Date(value);
@@ -73,6 +88,14 @@
 	}
 
 	// Mismo detalle que en Inicio y Explorar; desde el calendario solo se consulta el ticket.
+	function calendarPreview(event) {
+		return attendancePreview({ registration: { status: event.registration_status }, event, attendance: event.attendance, sessions: event.sessions });
+	}
+
+	function calendarProgress(event) {
+		return calendarPreview(event).attendance;
+	}
+
 	function openEventSheet(event) {
 		const card = eventCard(event);
 		const enrolled = event.registration_status === 'approved' && event.status !== 'cancelled';
@@ -89,11 +112,15 @@
 			speakerName: 'Organizador',
 			speakerRole: card.organizer,
 			aboutText: card.description || 'Sin descripción',
-			primaryLabel: enrolled ? null : enrollmentLabel(event),
-			primaryDisabled: true,
-			primaryAction: 'none',
+			// En la agenda móvil no hay pie de tarjeta: el ticket se abre desde la vista previa.
+			primaryLabel: canViewTicket(event) ? 'Ver ticket' : enrolled ? null : enrollmentLabel(event),
+			primaryDisabled: !canViewTicket(event),
+			primaryAction: canViewTicket(event) ? 'view_ticket' : 'none',
+			secondaryLabel: 'Darme de baja',
+			secondaryDisabled: !canRequestUnsubscribe({ registration: { status: event.registration_status }, event, attendance: event.attendance }),
+			secondaryAction: 'request_unsubscribe',
 			availabilityLabel: describeAttendanceProgress(event.attendance),
-			...attendancePreview({ registration: { status: event.registration_status }, event, attendance: event.attendance, sessions: event.sessions })
+			...calendarPreview(event)
 		};
 		dayDialogOpen = false;
 		sheetOpen = true;
@@ -125,11 +152,12 @@
 	$: selectedDateLabel = selectedDate
 		? new Date(`${selectedDate}T12:00:00`).toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'long' })
 		: '';
-	$: multiSessionEvents = events.filter(
-		(event) => Number(event.attendance?.total) > 1 && event.registration_status === 'approved' && event.status !== 'cancelled'
-	);
-
-	// Recibe el mapa como argumento para que las celdas se actualicen al cargar los datos.
+	$: monthPrefix = `${year}-${String(month + 1).padStart(2, '0')}`;
+	$: agendaDays = [...sessionsByDate.keys()]
+		.filter((date) => date.startsWith(monthPrefix))
+		.sort()
+		.map((date) => ({ date, entries: sortedEntries(sessionsByDate, date) }));
+	$: selectedHasSessions = Boolean(selectedDate) && sessionsByDate.has(selectedDate);
 	function sortedEntries(byDate, date) {
 		return [...(byDate.get(date) || [])].sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
 	}
@@ -137,7 +165,7 @@
 	function cellImages(entries) {
 		const urls = [];
 		for (const entry of entries) {
-			const style = backgroundImage(entry.event.cover_image_url);
+			const style = backgroundImage(resolveEventImage(entry.event));
 			if (style && !urls.includes(style)) urls.push(style);
 		}
 		return urls.slice(0, MAX_CELL_IMAGES);
@@ -146,6 +174,31 @@
 	function openDay(date) {
 		selectedDate = date;
 		dayDialogOpen = true;
+	}
+
+	function sessionTime(value) {
+		return new Date(value).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' });
+	}
+
+	function agendaDayLabel(date) {
+		return new Date(`${date}T12:00:00`).toLocaleDateString('es-MX', { weekday: 'long', day: 'numeric', month: 'short' });
+	}
+
+	// En móvil el día no abre un diálogo: lleva a su grupo dentro de la agenda.
+	function selectAgendaDay(date) {
+		selectedDate = date;
+		document.getElementById(`agenda-${date}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+	}
+
+	let touchStartX = null;
+	function onSwipeStart(touchEvent) {
+		touchStartX = touchEvent.touches[0]?.clientX ?? null;
+	}
+	function onSwipeEnd(touchEvent) {
+		if (touchStartX === null) return;
+		const dx = (touchEvent.changedTouches[0]?.clientX ?? touchStartX) - touchStartX;
+		touchStartX = null;
+		if (Math.abs(dx) > 50) shiftMonth(dx < 0 ? 1 : -1);
 	}
 
 	function shiftMonth(delta) {
@@ -179,7 +232,138 @@
 </script>
 
 <div class="w-full" data-testid="my-calendar">
-	<section class="flex h-[calc(100dvh-64px)] min-h-[520px] flex-col gap-2 px-2 pt-3 pb-2 sm:px-4 lg:h-[100dvh] lg:px-6 lg:pt-5">
+	<!-- Móvil: mes compacto (desliza para cambiar de mes) y agenda por día. -->
+	<section class="space-y-3 px-3 pt-3 pb-24 md:hidden" data-testid="calendar-mobile">
+		<div class="flex items-center justify-between gap-2">
+			<button type="button" class="grid h-10 w-10 place-items-center rounded-full hover:bg-white" aria-label="Mes anterior" onclick={() => shiftMonth(-1)}>
+				<ChevronLeft class="h-5 w-5" />
+			</button>
+			<div class="text-center">
+				<div class="text-base font-semibold first-letter:uppercase" aria-live="polite">{monthTitle}</div>
+				{#if loading}<div class="text-[11px] text-muted-foreground">Cargando…</div>{/if}
+			</div>
+			<div class="flex items-center gap-1">
+				<button type="button" class="rounded-full border bg-white px-3 py-1 text-xs font-semibold text-blue-700" onclick={goToday}>Hoy</button>
+				<button type="button" class="grid h-10 w-10 place-items-center rounded-full hover:bg-white" aria-label="Mes siguiente" onclick={() => shiftMonth(1)}>
+					<ChevronRight class="h-5 w-5" />
+				</button>
+			</div>
+		</div>
+
+		{#if loadError}
+			<div class="rounded-xl border border-red-200 bg-red-50 px-4 py-2 text-sm text-red-700">{loadError}</div>
+		{/if}
+
+		<div
+			class="rounded-2xl border bg-white p-2 shadow-sm"
+			role="group"
+			aria-label="Mes; desliza a los lados para cambiar de mes"
+			ontouchstart={onSwipeStart}
+			ontouchend={onSwipeEnd}
+		>
+			<div class="grid grid-cols-7 text-center text-[11px] font-semibold text-muted-foreground" aria-hidden="true">
+				{#each WEEKDAY_HEADERS as header}<div class="py-1">{header.slice(0, 1)}</div>{/each}
+			</div>
+			{#key `${year}-${month}`}
+				<div class="grid grid-cols-7 gap-y-1" in:panelIn={{ x: 24 * monthDirection, y: 0 }}>
+					{#each weeks as week}
+						{#each week as day (day.date)}
+							{@const entries = sortedEntries(sessionsByDate, day.date)}
+							<button
+								type="button"
+								class={`mx-auto flex h-11 w-11 flex-col items-center justify-center gap-0.5 rounded-full text-sm transition ${
+									day.date === selectedDate
+										? 'bg-blue-600 font-semibold text-white'
+										: day.date === todayKey
+											? 'font-semibold text-blue-700 ring-2 ring-blue-600'
+											: day.inMonth
+												? day.date < todayKey ? 'text-slate-400' : 'text-slate-800'
+												: 'text-slate-300'
+								}`}
+								aria-label={`${day.date}${entries.length ? `, ${entries.length} sesión(es)` : ''}`}
+								aria-pressed={day.date === selectedDate}
+								data-agenda-date={day.date}
+								onclick={() => selectAgendaDay(day.date)}
+							>
+								<span class="leading-none">{day.day}</span>
+								<span class="flex h-1.5 gap-0.5">
+									{#each entries.slice(0, 3) as entry (entry.id)}
+										<span class={`h-1.5 w-1.5 rounded-full ${day.date === selectedDate ? 'bg-white' : (SESSION_STATE_META[entry.displayState] || SESSION_STATE_META.upcoming).dot}`}></span>
+									{/each}
+								</span>
+							</button>
+						{/each}
+					{/each}
+				</div>
+			{/key}
+		</div>
+
+		<div class="flex flex-wrap gap-x-3 gap-y-1 px-1 text-[11px] text-muted-foreground">
+			{#each LEGEND as state}
+				<span class="flex items-center gap-1">
+					<span class={`h-2 w-2 rounded-full ${SESSION_STATE_META[state].dot}`}></span>
+					{SESSION_STATE_META[state].label}
+				</span>
+			{/each}
+		</div>
+
+		{#if selectedDate && !selectedHasSessions}
+			<div class="rounded-xl border border-dashed bg-white px-4 py-3 text-center text-sm text-muted-foreground">
+				Sin eventos el <span class="first-letter:uppercase">{agendaDayLabel(selectedDate)}</span>.
+			</div>
+		{/if}
+
+		{#if !loading && !agendaDays.length}
+			<div class="rounded-xl border border-dashed bg-white px-4 py-8 text-center text-sm text-muted-foreground">
+				No tienes sesiones este mes.
+			</div>
+		{/if}
+
+		<ol class="space-y-4" data-testid="calendar-agenda">
+			{#each agendaDays as group (group.date)}
+				<li id={`agenda-${group.date}`} class="scroll-mt-20">
+					<div class={`mb-2 flex items-center gap-2 text-sm font-semibold first-letter:uppercase ${group.date < todayKey ? 'text-slate-400' : 'text-slate-800'}`}>
+						<span class="first-letter:uppercase">{agendaDayLabel(group.date)}</span>
+						{#if group.date === todayKey}<span class="rounded-full bg-blue-600 px-2 py-0.5 text-[10px] font-semibold text-white">Hoy</span>{/if}
+					</div>
+					<ol class="space-y-2 border-l-2 border-slate-200 pl-4">
+						{#each group.entries as entry (entry.id)}
+							{@const meta = SESSION_STATE_META[entry.displayState] || SESSION_STATE_META.upcoming}
+							{@const ended = new Date(entry.ends_at) < now}
+							<li class="relative" data-testid="agenda-session">
+								<span class={`absolute -left-[23px] top-4 h-3 w-3 rounded-full ring-2 ring-white ${meta.dot}`}></span>
+								<button
+									type="button"
+									class={`flex w-full items-center gap-3 rounded-2xl border bg-white p-2 text-left shadow-sm transition active:scale-[0.99] ${ended ? 'opacity-70' : ''}`}
+									onclick={() => openEventSheet(entry.event)}
+								>
+									<img
+										src={resolveEventImage(entry.event)}
+										alt=""
+										class={`h-16 w-20 shrink-0 rounded-xl object-cover ${ended ? 'grayscale' : ''}`}
+										loading="lazy"
+									/>
+									<div class="min-w-0 flex-1">
+										<div class="text-xs font-semibold text-blue-700">{sessionTime(entry.starts_at)} – {sessionTime(entry.ends_at)}</div>
+										<div class="truncate text-sm font-semibold">{entry.event.title}</div>
+										<div class="truncate text-xs text-muted-foreground">{entry.event.location || 'Sin ubicación'}</div>
+										<div class="mt-1 flex flex-wrap gap-1">
+											<span class={`rounded-full border px-2 py-0.5 text-[10px] font-semibold ${meta.className}`}>{meta.label}</span>
+											{#if entry.event.sessions.length > 1}
+												<span class="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-700">Sesión {entry.index} de {entry.event.sessions.length}</span>
+											{/if}
+										</div>
+									</div>
+								</button>
+							</li>
+						{/each}
+					</ol>
+				</li>
+			{/each}
+		</ol>
+	</section>
+
+	<section class="hidden h-[calc(100dvh-64px)] min-h-[520px] flex-col gap-2 px-2 pt-3 pb-2 sm:px-4 md:flex lg:h-[100dvh] lg:px-6 lg:pt-5">
 		<div class="flex flex-wrap items-center justify-between gap-2">
 			<div class="flex items-center gap-2">
 				<h2 class="text-xl font-semibold tracking-tight">Mi calendario</h2>
@@ -217,6 +401,7 @@
 				{#each week as day (day.date)}
 					{@const entries = sortedEntries(sessionsByDate, day.date)}
 					{@const images = cellImages(entries)}
+					{@const past = day.date < todayKey}
 					<button
 						type="button"
 						class={`group relative overflow-hidden rounded-lg border text-left transition hover:shadow-md focus-visible:outline-2 focus-visible:outline-blue-600 sm:rounded-xl ${
@@ -228,11 +413,11 @@
 					>
 						{#if images.length === 1}
 							<!-- Una sola portada se muestra completa (2:1) sobre una copia desenfocada que rellena la celda. -->
-							<div class="absolute inset-0 scale-110 bg-cover bg-center blur-md" style={images[0]}></div>
-							<div class="absolute inset-0 bg-contain bg-center bg-no-repeat" style={images[0]}></div>
+							<div class={`absolute inset-0 scale-110 bg-cover bg-center blur-md ${past ? 'grayscale' : ''}`} style={images[0]}></div>
+							<div class={`absolute inset-0 bg-contain bg-center bg-no-repeat ${past ? 'grayscale' : ''}`} style={images[0]}></div>
 							<div class="absolute inset-0 bg-gradient-to-t from-black/75 via-black/20 to-black/30"></div>
 						{:else if images.length}
-							<div class="absolute inset-0 flex">
+							<div class={`absolute inset-0 flex ${past ? 'grayscale' : ''}`}>
 								{#each images as style}
 									<div class="h-full flex-1 bg-cover bg-center transition group-hover:scale-105" style={style}></div>
 								{/each}
@@ -277,26 +462,6 @@
 			{/each}
 		</div>
 	</section>
-
-	{#if multiSessionEvents.length}
-		<section class="space-y-3 px-2 pt-4 pb-24 sm:px-4 lg:px-6 lg:pb-8">
-			<h3 class="text-lg font-semibold tracking-tight">Avance en eventos de varias sesiones</h3>
-			<div class="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-				{#each multiSessionEvents as event, i (event.id)}
-					<div class="flex" data-testid="calendar-event-progress">
-						<EventCard index={i} event={eventCard(event)} availabilityLabel={enrollmentLabel(event)} onClick={() => openEventSheet(event)}>
-							<svelte:fragment slot="footer">
-								<EnrolledEventFooter
-									canViewTicket={canViewTicket(event)}
-									onViewTicket={() => openTicket(event.id)}
-								/>
-							</svelte:fragment>
-						</EventCard>
-					</div>
-				{/each}
-			</div>
-		</section>
-	{/if}
 </div>
 
 <Dialog.Root bind:open={dayDialogOpen}>
@@ -319,6 +484,7 @@
 						>
 							<svelte:fragment slot="footer">
 								<EnrolledEventFooter
+									attendance={calendarProgress(entry.event)}
 									canViewTicket={canViewTicket(entry.event) && ['upcoming', 'in_progress'].includes(entry.displayState)}
 									onViewTicket={() => openTicket(entry.event.id)}
 								/>
@@ -331,6 +497,13 @@
 	</Dialog.Content>
 </Dialog.Root>
 
-<EventDetailSheet bind:open={sheetOpen} event={selectedEvent} />
+<EventDetailSheet
+	bind:open={sheetOpen}
+	event={selectedEvent}
+	onPrimary={(evt) => evt?.primaryAction === 'view_ticket' && openTicket(evt.id)}
+	onSecondary={requestUnsubscribe}
+/>
+
+<UnsubscribeDialog bind:open={unsubscribeDialogOpen} event={unsubscribeTarget} onDone={afterUnsubscribe} />
 
 <TicketDialog bind:open={ticketDialogOpen} eventId={ticketEventId} />

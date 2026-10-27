@@ -47,6 +47,16 @@ export function attendancePreview(entry) {
 	};
 }
 
+// El back rechaza la baja con una asistencia registrada o con otra solicitud de baja en curso.
+export function canRequestUnsubscribe(entry) {
+	const status = String(entry?.registration?.status || '').toLowerCase();
+	if (!['approved', 'pending', 'changes_requested'].includes(status)) return false;
+	if (String(entry?.registration?.payload?.cancel_request?.status || '').toLowerCase() === 'pending') return false;
+	if (['cancelled', 'ended'].includes(String(entry?.event?.status || '').toLowerCase())) return false;
+	if (String(entry?.ticket?.status || '').toLowerCase() === 'used') return false;
+	return !(Number(entry?.attendance?.attended) > 0);
+}
+
 export function describeAttendanceProgress(attendance) {
 	if (!attendance || Number(attendance.total) <= 1) return '';
 	const base = `Asistencias: ${attendance.attended} de ${attendance.total}`;

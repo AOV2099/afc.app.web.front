@@ -3,8 +3,7 @@
   import { toast } from 'svelte-sonner';
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
-  import { ScrollArea, Scrollbar } from "$lib/components/ui/scroll-area";
-  import * as Dialog from '$lib/components/ui/dialog/index.js';
+  import UnsubscribeDialog from '$lib/components/UnsubscribeDialog.svelte';
   import { adminEventsApi, publicEventsApi, myRegistrationsApi } from '$lib/services/api';
   import {
     DEFAULT_EVENT_STATUS_FILTER,
@@ -13,11 +12,9 @@
     isPastEvent,
     isVisibleToUser
   } from '$lib/utils/events.js';
-  import { attendancePreview, describeAttendanceProgress } from '$lib/utils/eventSessions.js';
-  import { formatEventSchedule, mapEventToCard } from '$lib/utils/eventCards.js';
+  import { attendancePreview, canRequestUnsubscribe, describeAttendanceProgress } from '$lib/utils/eventSessions.js';
+  import { mapEventToCard } from '$lib/utils/eventCards.js';
   import EventCard from "$lib/components/EventCard.svelte";
-  import TicketDialog from '$lib/components/TicketDialog.svelte';
-  import EnrolledEventFooter from '$lib/components/EnrolledEventFooter.svelte';
   import EventStatusMultiSelect from "$lib/components/EventStatusMultiSelect.svelte";
 
   import { Search, SlidersHorizontal } from "lucide-svelte";
@@ -49,10 +46,7 @@
   let upcoming = [];
   let registeringEventId = null;
   let registrationsByEventId = {};
-  let ticketDialogOpen = false;
-  let ticketEventId = null;
   let unsubscribeDialogOpen = false;
-  let unsubscribingEventId = null;
   let unsubscribeTargetEvent = null;
 
   function mapAdminEventToUi(event) {
@@ -77,41 +71,18 @@
     return registrationsByEventId?.[eventId] || null;
   }
 
-  const ENROLLED_STATUSES = new Set(['approved', 'pending', 'changes_requested', 'cancel_pending']);
+  const ENROLLMENT_BADGES = {
+    approved: { label: 'Inscrito', className: 'bg-emerald-100 text-emerald-800 hover:bg-emerald-100' },
+    pending: { label: 'Solicitud pendiente', className: 'bg-amber-100 text-amber-800 hover:bg-amber-100' },
+    changes_requested: { label: 'Solicitud pendiente', className: 'bg-amber-100 text-amber-800 hover:bg-amber-100' },
+    cancel_pending: { label: 'Baja en revisión', className: 'bg-slate-200 text-slate-700 hover:bg-slate-200' }
+  };
 
-  function enrollmentLabel(entry) {
-    const status = String(entry?.registration?.status || '').toLowerCase();
-    if (status === 'pending' || status === 'changes_requested') return 'Solicitud pendiente';
-    if (status === 'cancel_pending') return 'Baja en revisión';
-    return describeAttendanceProgress(entry?.attendance) || 'Inscrito';
+  // Recibe el mapa como argumento para que la marca se actualice al inscribirse o darse de baja.
+  function enrollmentBadges(byEvent, eventId) {
+    const status = String(byEvent?.[eventId]?.registration?.status || '').toLowerCase();
+    return ENROLLMENT_BADGES[status] ? [ENROLLMENT_BADGES[status]] : [];
   }
-
-  // Inscripciones activas con una sesión pendiente de asistir, ordenadas por esa sesión.
-  function buildEnrolled(byEvent, upcomingItems) {
-    return Object.values(byEvent || {})
-      .filter((entry) => ENROLLED_STATUSES.has(String(entry?.registration?.status || '').toLowerCase()))
-      .filter((entry) => !['cancelled', 'ended'].includes(String(entry?.event?.status || '').toLowerCase()))
-      .map((entry) => {
-        const known = upcomingItems.find((item) => String(item.id) === String(entry?.event?.id));
-        const next = entry?.attendance?.next_session || null;
-        // Una inscripción recién hecha aún no trae asistencia: se apoya en el evento listado.
-        if (!next && (entry?.attendance || !known)) return null;
-        const item = known || mapAdminEventToUi(entry.event);
-        const startsAt = next?.starts_at || item.raw?.starts_at;
-        return {
-          ...item,
-          date: next ? formatEventSchedule(next.starts_at, next.ends_at) : item.date,
-          enrollmentLabel: enrollmentLabel(entry),
-          canViewTicket:
-            String(entry?.registration?.status || '').toLowerCase() === 'approved' && Boolean(entry?.ticket),
-          sortKey: new Date(startsAt).getTime() || 0
-        };
-      })
-      .filter(Boolean)
-      .sort((a, b) => a.sortKey - b.sortKey);
-  }
-
-  $: enrolled = adminMode ? [] : buildEnrolled(registrationsByEventId, upcoming);
 
   function isUsedTicket(ticket) {
     const status = String(ticket?.status || '').toLowerCase();
@@ -134,8 +105,7 @@
       const hasPendingSessions = Number(attendance?.total) > 1 && Number(attendance?.pending) > 0;
       const base = {
         secondaryLabel: 'Darme de baja',
-        // El back rechaza la baja en cuanto hay una asistencia registrada.
-        secondaryDisabled: Number(attendance?.attended) > 0 || isUsedTicket(ticket),
+        secondaryDisabled: !canRequestUnsubscribe(registrationEntry),
         secondaryAction: 'request_unsubscribe',
         availabilityLabel: attendanceLabel || null
       };
@@ -256,7 +226,7 @@
 
   function syncSelectedEventState(eventId) {
     if (!selectedEvent || selectedEvent.id !== eventId) return;
-    const item = upcoming.find((ev) => ev.id === eventId) || enrolled.find((ev) => ev.id === eventId);
+    const item = upcoming.find((ev) => ev.id === eventId);
     if (!item) return;
 
     const primaryState = getPrimaryStateForEvent(item);
@@ -526,43 +496,24 @@
     unsubscribeDialogOpen = true;
   }
 
-  async function confirmUnsubscribe() {
-    const evt = unsubscribeTargetEvent;
-    if (!evt?.id || unsubscribingEventId) return;
+  function afterUnsubscribe(res, evt) {
+    const mode = String(res?.mode || '').toLowerCase();
 
-    try {
-      unsubscribingEventId = evt.id;
-		const res = await publicEventsApi.unregisterFromEvent(evt.id, null);
-      const status = String(res?.registration?.status || '').toLowerCase();
-      const mode = String(res?.mode || '').toLowerCase();
-
-      if (res?.registration && mode === 'requested') {
-        upsertRegistrationState(evt.id, {
-          registration: res.registration,
-          pending_approval: Boolean(res?.pending_approval),
-          event: res?.event || { id: evt.id },
-          ticket: res?.ticket || null
-        });
-      } else {
-        removeRegistrationState(evt.id);
-        const current = upcoming.find((item) => item.id === evt.id)?.registrationsCount ?? 0;
-        setEventRegistrationsCount(evt.id, Math.max(Number(current) - 1, 0));
-      }
-
-      toast.success(res?.message || 'Se solicitó la baja del evento.');
-      unsubscribeDialogOpen = false;
-      unsubscribeTargetEvent = null;
-      syncSelectedEventState(evt.id);
-    } catch (error) {
-      toast.error(error?.message || 'No se pudo solicitar la baja del evento.');
-    } finally {
-      unsubscribingEventId = null;
+    if (res?.registration && mode === 'requested') {
+      upsertRegistrationState(evt.id, {
+        registration: res.registration,
+        pending_approval: Boolean(res?.pending_approval),
+        event: res?.event || { id: evt.id },
+        ticket: res?.ticket || null
+      });
+    } else {
+      removeRegistrationState(evt.id);
+      const current = upcoming.find((item) => item.id === evt.id)?.registrationsCount ?? 0;
+      setEventRegistrationsCount(evt.id, Math.max(Number(current) - 1, 0));
     }
-  }
 
-  function openTicket(eventId) {
-    ticketEventId = eventId;
-    ticketDialogOpen = true;
+    unsubscribeTargetEvent = null;
+    syncSelectedEventState(evt.id);
   }
 
   function searchEvents() {
@@ -627,42 +578,6 @@
     <div class="mt-3 text-sm font-semibold text-red-600">{loadError}</div>
   {/if}
 
-  {#if !adminMode}
-    <!-- Inscritos -->
-    <div class="mt-8 flex items-center justify-between">
-      <h2 class="text-lg font-semibold sm:text-xl">Inscritos</h2>
-    </div>
-
-    <ScrollArea class="mt-3 w-full whitespace-nowrap">
-      {#if loadingEvents}
-        <div class="pb-3 text-sm text-muted-foreground">Cargando tus inscripciones...</div>
-      {:else if !enrolled.length}
-        <div class="pb-3 text-sm text-muted-foreground">No estás inscrito en eventos próximos.</div>
-      {:else}
-        <div class="flex gap-4 pb-3" data-testid="enrolled-events">
-          {#each enrolled as item, i (item.id)}
-            <EventCard
-              index={i}
-              event={item}
-              variant="carousel"
-              availabilityLabel={item.enrollmentLabel}
-              onClick={() => openEventDetail(item)}
-            >
-              <svelte:fragment slot="footer">
-                <EnrolledEventFooter
-                  canViewTicket={item.canViewTicket}
-                  onViewTicket={() => openTicket(item.id)}
-                />
-              </svelte:fragment>
-            </EventCard>
-          {/each}
-        </div>
-      {/if}
-
-      <Scrollbar orientation="horizontal" />
-    </ScrollArea>
-  {/if}
-
   <!-- Próximos eventos -->
   <div class="mt-6">
     <h2 class="text-lg font-semibold sm:text-xl">{adminMode ? 'Eventos' : 'Próximos Eventos'}</h2>
@@ -681,6 +596,7 @@
         <EventCard
           index={i}
           event={e}
+          badges={enrollmentBadges(registrationsByEventId, e.id)}
           availabilityLabel={getAvailabilityLabel(e)}
           onClick={() => openEventDetail(e)}
         />
@@ -714,36 +630,5 @@
   onSecondary={handleSecondaryAction}
 />
 
-<Dialog.Root bind:open={unsubscribeDialogOpen}>
-  <Dialog.Content class="mx-auto w-[min(92vw,460px)] rounded-2xl p-0">
-    <div class="p-5">
-      <h3 class="text-lg font-semibold">Confirmar baja del evento</h3>
-      <p class="mt-3 text-sm text-muted-foreground">
-        ¿Seguro que deseas darte de baja de <span class="font-medium text-foreground">{unsubscribeTargetEvent?.title || 'este evento'}</span>?
-      </p>
-      <p class="mt-2 text-sm text-muted-foreground">
-        Nota: algunas solicitudes de baja pueden quedar en revisión del organizador antes de aplicarse.
-      </p>
+<UnsubscribeDialog bind:open={unsubscribeDialogOpen} event={unsubscribeTargetEvent} onDone={afterUnsubscribe} />
 
-      <div class="mt-5 grid grid-cols-2 gap-3">
-        <Button
-          variant="secondary"
-          class="w-full rounded-xl"
-          disabled={Boolean(unsubscribingEventId)}
-          onclick={() => (unsubscribeDialogOpen = false)}
-        >
-          Cancelar
-        </Button>
-        <Button
-          class="w-full rounded-xl bg-red-600 text-white hover:bg-red-700"
-          disabled={Boolean(unsubscribingEventId)}
-          onclick={confirmUnsubscribe}
-        >
-          {unsubscribingEventId ? 'Procesando...' : 'Confirmar baja'}
-        </Button>
-      </div>
-    </div>
-  </Dialog.Content>
-</Dialog.Root>
-
-<TicketDialog bind:open={ticketDialogOpen} eventId={ticketEventId} />

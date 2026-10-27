@@ -1134,9 +1134,10 @@
     </div>
   {:else}
   <div class="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-    {#each events as ev (ev.id)}
+    {#each events as ev, i (ev.id)}
       <div class="flex" data-career-disabled={isCareerRestricted(ev) ? "true" : undefined}>
         <EventCard
+          index={i}
           event={mapEventToCard(ev)}
           allowPast
           disabled={isCareerRestricted(ev)}

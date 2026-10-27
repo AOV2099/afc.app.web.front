@@ -1,32 +1,40 @@
 <script>
 	import { goto } from '$app/navigation';
 	import { onMount } from 'svelte';
-	import { toast } from 'svelte-sonner';
 	import { Card, CardContent } from '$lib/components/ui/card';
 	import { Button } from '$lib/components/ui/button';
-	import { ScrollArea, Scrollbar } from '$lib/components/ui/scroll-area';
 	import AlertPreviewCard from '$lib/components/alerts/AlertPreviewCard.svelte';
 	import EventCard from '$lib/components/EventCard.svelte';
 	import EnrolledEventFooter from '$lib/components/EnrolledEventFooter.svelte';
+	import NextEventTicket from '$lib/components/NextEventTicket.svelte';
 	import TicketDialog from '$lib/components/TicketDialog.svelte';
+	import UnsubscribeDialog from '$lib/components/UnsubscribeDialog.svelte';
 	import { alertsApi, myRegistrationsApi, publicEventsApi } from '$lib/services/api';
 	import { getEventCategoryMeta } from '$lib/catalogs/eventCategories';
 	import { getEventCategoryIcon } from '$lib/catalogs/eventCategoryIcons';
-	import {
-		isPastEvent,
-		isVisibleToUser
-	} from '$lib/utils/events.js';
-	import { attendancePreview, describeAttendanceProgress } from '$lib/utils/eventSessions.js';
+	import { isPastEvent, nearestDayItems } from '$lib/utils/events.js';
+	import { attendancePreview, canRequestUnsubscribe, describeAttendanceProgress } from '$lib/utils/eventSessions.js';
 	import { formatEventSchedule, mapEventToCard } from '$lib/utils/eventCards.js';
 	import { panelIn, staggerDelay } from '$lib/utils/motion.js';
-
-	import { ChevronRight } from 'lucide-svelte';
 
 	import EventDetailSheet from './EventDetailSheet.svelte';
 
 	let sheetOpen = false;
 	let selectedEvent = null;
 	let registrationsByEventId = {};
+	let unsubscribeDialogOpen = false;
+	let unsubscribeTarget = null;
+
+	function requestUnsubscribe(evt) {
+		if (evt?.secondaryAction !== 'request_unsubscribe' || evt?.secondaryDisabled) return;
+		unsubscribeTarget = { id: evt.id, title: evt.title };
+		unsubscribeDialogOpen = true;
+	}
+
+	async function afterUnsubscribe() {
+		sheetOpen = false;
+		await loadUpcomingRegisteredEvents();
+	}
 
 	async function openEventDetail(item) {
 		const currentRegistration = getRegistrationForEvent(item?.id);
@@ -67,6 +75,9 @@
 			primaryDisabled: state.disabled,
 			primaryAction: state.action,
 			availabilityLabel: state.availabilityLabel || item.availabilityLabel || '',
+			secondaryLabel: 'Darme de baja',
+			secondaryDisabled: !canRequestUnsubscribe(getRegistrationForEvent(item?.id)),
+			secondaryAction: 'request_unsubscribe',
 			...attendancePreview(getRegistrationForEvent(item?.id))
 		};
 
@@ -79,10 +90,7 @@
 	let ticketDialogOpen = false;
 	let ticketEventId = null;
 	let alertsNews = [];
-	let recommendedEvents = [];
-	let recommendedLoading = false;
-	let recommendedError = '';
-	let registeringFromSheet = false;
+	let myEventCards = [];
 
 	function normalizeStatus(value) {
 		return String(value || '').trim().toLowerCase();
@@ -133,11 +141,6 @@
 		return { label: 'Inscribirse ahora', disabled: false, action: 'register' };
 	}
 
-	function toDayKey(date) {
-		if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
-		return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
-	}
-
 	async function loadUpcomingRegisteredEvents() {
 		nextEventsLoading = true;
 		nextEventsError = '';
@@ -161,7 +164,7 @@
 				return acc;
 			}, {});
 
-			const candidates = all
+			const cards = all
 				.filter((entry) => isActiveRegistrationStatus(entry?.registration?.status))
 				.filter((entry) => !['cancelled', 'ended'].includes(normalizeStatus(entry?.event?.status)))
 				.map((entry) => {
@@ -172,58 +175,32 @@
 					const startsMs = startsDate && !Number.isNaN(startsDate.getTime()) ? startsDate.getTime() : null;
 
 					return mapEventToCard(entry?.event, {
-						date: formatEventSchedule(nextSession?.starts_at, nextSession?.ends_at),
+						date: nextSession
+							? formatEventSchedule(nextSession.starts_at, nextSession.ends_at)
+							: formatEventSchedule(entry?.event?.starts_at, entry?.event?.ends_at),
 						startsMs,
-						dayKey: startsDate ? toDayKey(startsDate) : '',
+						sortMs: startsMs ?? (new Date(entry?.event?.starts_at).getTime() || 0),
 						enrollmentLabel:
 							registrationStatus === 'pending'
 								? 'Solicitud pendiente'
 								: registrationStatus === 'cancel_pending'
 									? 'Baja en revisión'
 									: describeAttendanceProgress(entry?.attendance) || 'Inscrito',
-						canViewTicket: registrationStatus === 'approved' && Boolean(entry?.ticket)
+						canViewTicket: registrationStatus === 'approved' && Boolean(entry?.ticket),
+						ticketCode: registrationStatus === 'approved' ? entry?.ticket?.ticket_code || null : null,
+						progress: attendancePreview(entry)
 					});
 				})
-				.filter((x) => Number.isFinite(x.startsMs))
-				.sort((a, b) => a.startsMs - b.startsMs);
+				.sort((a, b) => a.sortMs - b.sortMs);
 
-			if (!candidates.length) {
-				nextEventCards = [];
-				return;
-			}
-
-			const nearestDayKey = candidates[0].dayKey;
-			nextEventCards = candidates.filter((x) => x.dayKey === nearestDayKey);
+			myEventCards = cards;
+			nextEventCards = nearestDayItems(cards, (x) => x.startsMs ?? NaN);
 		} catch (e) {
 			nextEventsError = e?.message || 'No se pudo cargar tu próximo evento.';
 			nextEventCards = [];
+			myEventCards = [];
 		} finally {
 			nextEventsLoading = false;
-		}
-	}
-
-	function mapEventToRecommendedCard(event) {
-		return mapEventToCard(event, {
-			availabilityLabel: isPastEvent(event) ? 'Este evento ya finalizó.' : ''
-		});
-	}
-
-	async function loadRecommendedEvents() {
-		recommendedLoading = true;
-		recommendedError = '';
-
-		try {
-			const now = Date.now();
-			const res = await publicEventsApi.listEvents({ page: 1, pageSize: 12 });
-			const events = Array.isArray(res?.events) ? res.events : [];
-			recommendedEvents = events
-				.filter((event) => isVisibleToUser(event, now))
-				.map(mapEventToRecommendedCard);
-		} catch (e) {
-			recommendedEvents = [];
-			recommendedError = e?.message || 'No se pudieron cargar los eventos.';
-		} finally {
-			recommendedLoading = false;
 		}
 	}
 
@@ -294,51 +271,8 @@
 		ticketDialogOpen = true;
 	}
 
-	async function registerFromEventSheet(evt) {
-		if (registeringFromSheet) return;
-
-		const eventId = Number(evt?.id);
-		if (!Number.isInteger(eventId) || eventId <= 0) {
-			toast.error('Evento inválido para inscripción.');
-			return;
-		}
-
-		registeringFromSheet = true;
-		if (selectedEvent) {
-			selectedEvent = {
-				...selectedEvent,
-				primaryDisabled: true,
-				primaryLabel: 'Inscribiendo...'
-			};
-		}
-
-		try {
-			const res = await publicEventsApi.registerToEvent(eventId, {});
-			toast.success(res?.message || 'Inscripción enviada correctamente.');
-			sheetOpen = false;
-			await Promise.all([loadUpcomingRegisteredEvents(), loadRecommendedEvents()]);
-		} catch (error) {
-			toast.error(error?.message || 'No se pudo completar la inscripción.');
-			if (selectedEvent) {
-				selectedEvent = {
-					...selectedEvent,
-					primaryDisabled: false,
-					primaryLabel: 'Inscribirse ahora'
-				};
-			}
-		} finally {
-			registeringFromSheet = false;
-		}
-	}
-
-	async function handleEventSheetPrimary(evt) {
-		if (evt?.primaryAction === 'none') return;
-		await registerFromEventSheet(evt);
-	}
-
 	onMount(() => {
 		loadUpcomingRegisteredEvents();
-		loadRecommendedEvents();
 		loadAlertsForNews();
 	});
 </script>
@@ -363,56 +297,42 @@
 			<div class="px-5 py-8 text-sm text-slate-600 sm:px-6">No tienes eventos próximos inscritos.</div>
 		</Card>
 	{:else}
-		<div class="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3" data-testid="next-events">
+		<div class="mt-4 grid gap-4 md:grid-cols-2" data-testid="next-events">
 			{#each nextEventCards as nextEvent, i (nextEvent.id)}
+				<NextEventTicket index={i} event={nextEvent} onOpen={() => openEventDetail(nextEvent)} />
+			{/each}
+		</div>
+	{/if}
+
+	<!-- Mis eventos -->
+	<div class="mt-8 flex items-center justify-between">
+		<h2 class="text-xl font-semibold tracking-tight">Mis eventos</h2>
+	</div>
+
+	{#if nextEventsLoading}
+		<div class="mt-4 text-sm text-muted-foreground">Cargando tus eventos...</div>
+	{:else if !myEventCards.length}
+		<div class="mt-4 text-sm text-muted-foreground">Aún no estás inscrito en eventos activos.</div>
+	{:else}
+		<div class="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-3" data-testid="my-events">
+			{#each myEventCards as item, i (item.id)}
 				<EventCard
 					index={i}
-					event={nextEvent}
-					availabilityLabel={nextEvent.enrollmentLabel}
-					onClick={() => openEventDetail(nextEvent)}
+					event={item}
+					availabilityLabel={item.enrollmentLabel}
+					onClick={() => openEventDetail(item)}
 				>
 					<svelte:fragment slot="footer">
 						<EnrolledEventFooter
-							canViewTicket={nextEvent.canViewTicket}
-							onViewTicket={() => openTicketDialog(nextEvent.id)}
+							attendance={item.progress.attendance}
+							canViewTicket={item.canViewTicket}
+							onViewTicket={() => openTicketDialog(item.id)}
 						/>
 					</svelte:fragment>
 				</EventCard>
 			{/each}
 		</div>
 	{/if}
-
-	<!-- Recomendados -->
-	<div class="mt-8 flex items-center justify-between">
-		<h2 class="text-xl font-semibold tracking-tight">Recomendados para ti</h2>
-		<Button variant="ghost" size="icon" class="rounded-full" aria-label="Ver más">
-			<ChevronRight class="h-5 w-5" />
-		</Button>
-	</div>
-
-	<ScrollArea class="mt-4 w-full whitespace-nowrap">
-		{#if recommendedLoading}
-			<div class="pb-3 text-sm text-muted-foreground">Cargando eventos...</div>
-		{:else if recommendedError}
-			<div class="pb-3 text-sm text-red-600">{recommendedError}</div>
-		{:else if !recommendedEvents.length}
-			<div class="pb-3 text-sm text-muted-foreground">No hay eventos disponibles por el momento.</div>
-		{:else}
-			<div class="flex gap-4 pb-3">
-				{#each recommendedEvents as r, i (r.id)}
-					<EventCard
-						index={i}
-						event={r}
-						variant="carousel"
-						availabilityLabel={r.availabilityLabel || null}
-						onClick={() => openEventDetail(r)}
-					/>
-				{/each}
-			</div>
-		{/if}
-
-		<Scrollbar orientation="horizontal" />
-	</ScrollArea>
 
 	<!-- Noticias y avisos -->
 	<div class="mt-8 flex items-center justify-between gap-3">
@@ -441,8 +361,6 @@
 
 <TicketDialog bind:open={ticketDialogOpen} eventId={ticketEventId} />
 
-<EventDetailSheet
-  bind:open={sheetOpen}
-  event={selectedEvent}
-	onPrimary={handleEventSheetPrimary}
-  />
+<EventDetailSheet bind:open={sheetOpen} event={selectedEvent} onSecondary={requestUnsubscribe} />
+
+<UnsubscribeDialog bind:open={unsubscribeDialogOpen} event={unsubscribeTarget} onDone={afterUnsubscribe} />

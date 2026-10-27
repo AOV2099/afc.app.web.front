@@ -1,13 +1,11 @@
 <script>
   import { onMount } from 'svelte';
-  import { toast } from 'svelte-sonner';
-  import { toPng } from 'html-to-image';
   import { Card, CardContent } from "$lib/components/ui/card";
   import { Button } from "$lib/components/ui/button";
   import { Input } from '$lib/components/ui/input';
   import * as Tooltip from '$lib/components/ui/tooltip/index.js';
-  import { myHoursApi, publicEventsApi } from '$lib/services/api';
-  import { createTicketQrDataUrl } from '$lib/services/qrCodeService';
+  import TicketDialog from '$lib/components/TicketDialog.svelte';
+  import { myHoursApi } from '$lib/services/api';
   import { panelIn, staggerDelay } from '$lib/utils/motion.js';
   import {
     EVENT_CATEGORY_OPTIONS,
@@ -15,13 +13,11 @@
   } from '$lib/catalogs/eventCategories';
   import { EVENT_CATEGORY_STYLE_CLASSES } from '$lib/stores/eventCategoryStyles';
   import { getEventCategoryIcon } from '$lib/catalogs/eventCategoryIcons';
-  import * as Dialog from '$lib/components/ui/dialog/index.js';
 
   import {
     CalendarDays,
     ChevronDown,
-    Ticket,
-    Download
+    Ticket
   } from "lucide-svelte";
 
   const DEFAULT_HOURS_GOAL = 480;
@@ -64,8 +60,8 @@
   };
 
   let ticketDialogOpen = false;
-  let selectedTicket = null;
-  let ticketCaptureContainer;
+  let ticketEventId = null;
+  let ticketTitle = 'Evento';
   let historySearch = '';
 
   function chipClass(type) {
@@ -185,7 +181,7 @@
 
       const responseTotalHours = Number(res?.total_hours);
       const responseGoal = Number(res?.hours_goal);
-      if (Number.isFinite(responseGoal) && responseGoal > 0) hoursGoal = responseGoal;
+      if (Number.isFinite(responseGoal) && responseGoal >= 0) hoursGoal = responseGoal;
       const loadedHours = items.reduce(
         (sum, item) => sum + (Number(item?.hoursDelta ?? 0) || 0),
         0
@@ -209,50 +205,11 @@
     }
   }
 
-  async function openTicket(item) {
+  function openTicket(item) {
     if (!item?.eventId) return;
-
-    try {
-      const res = await publicEventsApi.getEventTicket(item.eventId);
-      const ticketCode = res?.ticket?.ticket_code || 'Sin código';
-      const qrDataUrl = ticketCode && ticketCode !== 'Sin código'
-        ? await createTicketQrDataUrl(ticketCode)
-        : null;
-
-      selectedTicket = {
-        eventTitle: res?.event?.title || item?.title || 'Evento',
-        ticketCode,
-        ticketStatus: res?.ticket?.status || 'active',
-        qrDataUrl
-      };
-      ticketDialogOpen = true;
-    } catch (error) {
-      toast.error(error?.message || 'No se pudo consultar el ticket.');
-    }
-  }
-
-  async function downloadTicketImage() {
-    if (!ticketCaptureContainer || !selectedTicket) return;
-
-    try {
-      const dataUrl = await toPng(ticketCaptureContainer, {
-        cacheBust: true,
-        pixelRatio: 2,
-        backgroundColor: '#ffffff'
-      });
-
-      const eventTitle = String(selectedTicket?.eventTitle || 'evento')
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/gi, '-')
-        .replace(/(^-|-$)/g, '') || 'evento';
-
-      const link = document.createElement('a');
-      link.download = `ticket-${eventTitle}.png`;
-      link.href = dataUrl;
-      link.click();
-    } catch (error) {
-      toast.error('No se pudo descargar la imagen del ticket.');
-    }
+    ticketEventId = item.eventId;
+    ticketTitle = item?.title || 'Evento';
+    ticketDialogOpen = true;
   }
 
   function loadMore() {
@@ -260,7 +217,8 @@
     loadHoursHistory(pagination.page + 1, true);
   }
 
-  $: progressPercent = Math.max(0, Math.min(100, (Number(totalHours || 0) / hoursGoal) * 100));
+  $: countsAfcHours = hoursGoal > 0;
+  $: progressPercent = countsAfcHours ? Math.max(0, Math.min(100, (Number(totalHours || 0) / hoursGoal) * 100)) : 0;
   $: remainingHours = Math.max(0, hoursGoal - Number(totalHours || 0));
   $: normalizedHistorySearch = normalizeSearchText(historySearch);
   $: filteredItems = !normalizedHistorySearch
@@ -297,11 +255,17 @@
         PROGRESO DE HORAS COMPLEMENTARIAS
       </div>
 
-      <div class="mt-3 flex items-baseline gap-3">
+      <div class="mt-3 flex flex-wrap items-baseline gap-3">
         <div class="text-4xl font-semibold">{Number(totalHours || 0).toFixed(2)}</div>
-        <div class="text-base text-muted-foreground">
-          de {hoursGoal} hrs meta
-        </div>
+        {#if countsAfcHours}
+          <div class="text-base text-muted-foreground">
+            de {hoursGoal} hrs meta
+          </div>
+        {:else}
+          <span class="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs font-semibold text-slate-700" data-testid="no-afc-hours">
+            Esta carrera no contabiliza horas AFC
+          </span>
+        {/if}
       </div>
 
       <div>
@@ -314,6 +278,7 @@
         </div>
       </div>
 
+      {#if countsAfcHours}
       <div class="mt-4">
         <div class="h-3 w-full rounded-full bg-slate-100">
           <div
@@ -330,6 +295,7 @@
           </div>
         {/if}
       </div>
+      {/if}
 
       <div class="mt-5 rounded-2xl border bg-muted/30 p-4">
         <div class="space-y-3">
@@ -470,41 +436,4 @@
   {/if}
 </div>
 
-<Dialog.Root bind:open={ticketDialogOpen}>
-  <Dialog.Content class="mx-auto w-[min(92vw,420px)] rounded-2xl p-0">
-    <div class="p-5">
-      <div bind:this={ticketCaptureContainer} class="rounded-2xl border bg-white p-4">
-        <div class="flex items-center gap-2 text-blue-700">
-          <Ticket class="h-4 w-4" />
-          <h3 class="text-lg font-semibold">Ticket del evento</h3>
-        </div>
-
-        <div class="mt-4 space-y-2 text-sm">
-          <div>
-            <span class="font-semibold">Evento:</span> {selectedTicket?.eventTitle || 'Sin evento'}
-          </div>
-        </div>
-
-        {#if selectedTicket?.qrDataUrl}
-          <div class="mt-5 flex justify-center">
-            <img
-              src={selectedTicket.qrDataUrl}
-              alt={`QR ticket ${selectedTicket?.ticketCode || ''}`}
-              class="h-56 w-56 rounded-md object-contain"
-            />
-          </div>
-        {/if}
-      </div>
-
-      <div class="mt-5 grid grid-cols-2 gap-3">
-        <Dialog.Close asChild>
-          <Button variant="secondary" class="w-full rounded-xl">Cerrar</Button>
-        </Dialog.Close>
-        <Button class="w-full rounded-xl bg-blue-600 text-white hover:bg-blue-700" onclick={downloadTicketImage}>
-          <Download class="mr-2 h-4 w-4" />
-          Descargar
-        </Button>
-      </div>
-    </div>
-  </Dialog.Content>
-</Dialog.Root>
+<TicketDialog bind:open={ticketDialogOpen} eventId={ticketEventId} fallbackTitle={ticketTitle} />

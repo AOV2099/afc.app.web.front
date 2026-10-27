@@ -6,6 +6,7 @@
 	import { Button } from '$lib/components/ui/button';
 	import { Badge } from '$lib/components/ui/badge';
 	import { Loader2 } from 'lucide-svelte';
+	import { panelIn, staggerDelay } from '$lib/utils/motion.js';
 
 	let loading = false;
 	let submitting = '';
@@ -115,9 +116,10 @@
 				<div class="text-sm text-muted-foreground">No hay solicitudes pendientes.</div>
 			{:else}
 				<div class="space-y-3">
-					{#each requests as req (req.registration_id)}
+					{#each requests as req, i (req.registration_id)}
 						<article
 							class="rounded-xl border p-3"
+							in:panelIn|global={{ delay: staggerDelay(i) }}
 							aria-label={`Solicitud para ${req?.event?.title || 'Evento'}`}
 						>
 							<div class="flex flex-wrap items-center justify-between gap-2">

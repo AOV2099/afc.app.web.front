@@ -4,6 +4,7 @@
 
 	import { adminCareersApi } from '$lib/services/api';
 	import { Badge } from '$lib/components/ui/badge';
+	import { panelIn, staggerDelay } from '$lib/utils/motion.js';
 	import { Button } from '$lib/components/ui/button';
 	import { Card, CardContent } from '$lib/components/ui/card';
 	import { Input } from '$lib/components/ui/input';
@@ -49,8 +50,8 @@
 		const clave = String(form.clave_carrera ?? '').trim();
 		if (clave && !/^\d{1,10}$/.test(clave)) return 'La clave de carrera solo admite dígitos (máximo 10).';
 		const hoursText = String(form.afc_hours ?? '').trim();
-		if (!/^\d{1,4}(?:\.\d{1,2})?$/.test(hoursText) || !(Number(hoursText) > 0)) {
-			return 'Las horas AFC deben ser un número mayor a 0 con hasta 2 decimales.';
+		if (!/^\d{1,4}(?:\.\d{1,2})?$/.test(hoursText) || !(Number(hoursText) >= 0)) {
+			return 'Las horas AFC deben ser un número mayor o igual a 0 con hasta 2 decimales.';
 		}
 		return '';
 	}
@@ -150,8 +151,8 @@
 						</tr>
 					</thead>
 					<tbody>
-						{#each visibleCareers as career (career.id)}
-							<tr class="border-t">
+						{#each visibleCareers as career, i (career.id)}
+							<tr class="border-t" in:panelIn|global={{ delay: staggerDelay(i) }}>
 								<td class="px-4 py-3 font-medium">{career.name}</td>
 								<td class="px-4 py-3">
 									{#if career.clave_carrera}
@@ -161,7 +162,13 @@
 									{/if}
 								</td>
 								<td class="px-4 py-3 text-muted-foreground">{career.faculty || '—'}</td>
-								<td class="px-4 py-3 text-right font-semibold">{formatHours(career.afc_hours)} h</td>
+								<td class="px-4 py-3 text-right font-semibold">
+									{#if Number(career.afc_hours) === 0}
+										<Badge class="rounded-full bg-slate-100 text-slate-700 hover:bg-slate-100">No contabiliza horas AFC</Badge>
+									{:else}
+										{formatHours(career.afc_hours)} h
+									{/if}
+								</td>
 								<td class="px-4 py-3 text-right">{career.users_count ?? 0}</td>
 								<td class="px-4 py-3 text-right">
 									<Button variant="ghost" class="h-8 rounded-lg" onclick={() => openEdit(career)}>Editar</Button>
@@ -197,7 +204,8 @@
 			</div>
 			<div class="space-y-2">
 				<Label for="career-hours">Meta de horas AFC</Label>
-				<Input id="career-hours" type="number" min="0.5" step="0.5" bind:value={form.afc_hours} />
+				<Input id="career-hours" type="number" min="0" step="0.5" bind:value={form.afc_hours} />
+				<p class="text-xs text-muted-foreground">Usa 0 si la carrera no contabiliza horas AFC.</p>
 			</div>
 			<div class="space-y-2 sm:col-span-2">
 				<Label for="career-faculty">Facultad</Label>
