@@ -1363,11 +1363,11 @@
 					</Card>
 				{:else}
 					{#each users as u (u.id)}
-						<Card class={`rounded-3xl border bg-card text-card-foreground ${cardShadow}`}>
-							<CardContent class="p-5">
+						<Card class={`min-w-0 rounded-3xl border bg-card text-card-foreground ${cardShadow}`}>
+							<CardContent class="p-5 [overflow-wrap:anywhere]">
 								<div class="flex items-start justify-between gap-3">
-									<div class="flex items-center gap-3">
-										<Avatar class="h-12 w-12">
+									<div class="flex min-w-0 flex-1 items-center gap-3">
+										<Avatar class="h-12 w-12 shrink-0">
 											<AvatarImage src="" alt={fullName(u)} />
 											<AvatarFallback>{initials(fullName(u))}</AvatarFallback>
 										</Avatar>
@@ -1396,7 +1396,7 @@
 										</div>
 									</div>
 
-									<Badge class={badgeClass(u.role)}>{formatRole(u.role || 'visitor')}</Badge>
+									<Badge class={`shrink-0 ${badgeClass(u.role)}`}>{formatRole(u.role || 'visitor')}</Badge>
 								</div>
 
 								<Separator class="my-4" />

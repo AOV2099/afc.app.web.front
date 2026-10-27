@@ -37,16 +37,16 @@
 </script>
 
 <article
-	class="overflow-hidden rounded-2xl border bg-white shadow-sm"
+	class="min-w-0 overflow-hidden rounded-2xl border bg-white shadow-sm"
 	data-testid="next-event-ticket"
 	in:panelIn|global={{ delay: staggerDelay(index) }}
 >
 	<div class="relative h-20 w-full overflow-hidden bg-blue-600">
 		<img src={event.img} alt="" class="h-full w-full object-cover opacity-80" loading="lazy" />
 		<div class="absolute inset-0 bg-gradient-to-r from-blue-900/80 to-blue-600/30"></div>
-		<span class={`absolute left-4 top-4 inline-flex items-center rounded-lg px-2 py-1 text-xs font-medium ${event.tagClass}`}>
-			<svelte:component this={event.categoryIcon} class="mr-1 h-3.5 w-3.5" />
-			{event.tag}
+		<span class={`absolute left-4 top-4 inline-flex max-w-[calc(100%-7rem)] items-center rounded-lg px-2 py-1 text-xs font-medium ${event.tagClass}`}>
+			<svelte:component this={event.categoryIcon} class="mr-1 h-3.5 w-3.5 shrink-0" />
+			<span class="truncate">{event.tag}</span>
 		</span>
 		{#if event.credits}
 			<span class="absolute right-4 top-4 rounded-xl bg-white/90 px-2 py-0.5 text-xs font-semibold">{event.credits}</span>
@@ -69,15 +69,15 @@
 		</div>
 
 		<div class="min-w-0 flex-1 space-y-2 text-center sm:text-left">
-			<h3 class="line-clamp-2 text-lg font-semibold leading-tight">{event.title}</h3>
+			<h3 class="line-clamp-2 text-lg font-semibold leading-tight [overflow-wrap:anywhere]">{event.title}</h3>
 			<div class="space-y-1 text-sm text-muted-foreground">
-				<div class="flex items-center justify-center gap-2 sm:justify-start">
-					<CalendarDays class="h-4 w-4 shrink-0" />
-					<span>{event.date}</span>
+				<div class="flex items-start justify-center gap-2 sm:justify-start">
+					<CalendarDays class="mt-0.5 h-4 w-4 shrink-0" />
+					<span class="min-w-0 [overflow-wrap:anywhere]">{event.date}</span>
 				</div>
-				<div class="flex items-center justify-center gap-2 sm:justify-start">
-					<MapPin class="h-4 w-4 shrink-0" />
-					<span class="truncate">{event.place}</span>
+				<div class="flex items-start justify-center gap-2 sm:justify-start">
+					<MapPin class="mt-0.5 h-4 w-4 shrink-0" />
+					<span class="min-w-0 truncate">{event.place}</span>
 				</div>
 			</div>
 			{#if qrDataUrl}

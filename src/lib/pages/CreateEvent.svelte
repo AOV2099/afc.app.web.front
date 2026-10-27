@@ -539,6 +539,7 @@
 			category: form.category,
 			location: form.location?.trim() || null,
 			organizer: form.organizer?.trim() || null,
+			cover_image_url: normalizedCoverImageUrl || null,
 			starts_at: startsAt,
 			ends_at: endsAt,
 			afc_valuation: afcHoursEnabled

@@ -373,10 +373,10 @@
 
     {#each filteredItems as e, i (e.id)}
       <div in:panelIn|global={{ delay: staggerDelay(i) }}>
-      <Card class="rounded-2xl border shadow-sm transition hover:shadow-md">
+      <Card class="min-w-0 rounded-2xl border shadow-sm transition hover:shadow-md [overflow-wrap:anywhere]">
         <CardContent class="px-5 sm:px-6 py-0 sm:py-0">
           <div class="flex items-start justify-between gap-3">
-            <div class="flex items-center gap-3">
+            <div class="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
               <span class={`inline-flex items-center rounded-lg px-3 py-1 text-xs font-semibold ${chipClass(e.movementType)}`}>
                 {e.hoursDelta >= 0 ? `+${e.hoursDelta.toFixed(2)} hrs` : `${e.hoursDelta.toFixed(2)} hrs`}
               </span>

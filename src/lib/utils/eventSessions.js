@@ -97,6 +97,8 @@ export function describeHoursRelease(attendance, hoursValue) {
 }
 
 export const SESSION_STATE_META = Object.freeze({
+	available: { label: 'Disponible', className: 'border-violet-200 bg-violet-50 text-violet-700', dot: 'bg-violet-400' },
+	ended: { label: 'Finalizada', className: 'border-slate-200 bg-slate-50 text-slate-500', dot: 'bg-slate-300' },
 	attended: { label: 'Asistida', className: 'border-emerald-200 bg-emerald-50 text-emerald-700', dot: 'bg-emerald-500' },
 	missed: { label: 'Sin asistencia', className: 'border-red-200 bg-red-50 text-red-700', dot: 'bg-red-500' },
 	in_progress: { label: 'Hoy', className: 'border-amber-200 bg-amber-50 text-amber-800', dot: 'bg-amber-500' },

@@ -1,12 +1,13 @@
 <script>
 	import { onMount } from 'svelte';
+	import { toast } from 'svelte-sonner';
 	import * as Dialog from '$lib/components/ui/dialog/index.js';
 	import EventCard from '$lib/components/EventCard.svelte';
 	import EnrolledEventFooter from '$lib/components/EnrolledEventFooter.svelte';
 	import TicketDialog from '$lib/components/TicketDialog.svelte';
 	import UnsubscribeDialog from '$lib/components/UnsubscribeDialog.svelte';
 	import EventDetailSheet from '$lib/pages/EventDetailSheet.svelte';
-	import { myRegistrationsApi } from '$lib/services/api';
+	import { myRegistrationsApi, publicEventsApi } from '$lib/services/api';
 	import {
 		SESSION_STATE_META,
 		attendancePreview,
@@ -20,7 +21,7 @@
 	import { ChevronLeft, ChevronRight } from 'lucide-svelte';
 
 	const WEEKDAY_HEADERS = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'];
-	const LEGEND = ['attended', 'missed', 'in_progress', 'upcoming', 'pending', 'cancelled'];
+	const LEGEND = ['attended', 'missed', 'in_progress', 'upcoming', 'pending', 'available', 'cancelled'];
 	const MAX_CELL_IMAGES = 3;
 
 	let loading = true;
@@ -40,6 +41,54 @@
 	let ticketEventId = null;
 	let unsubscribeDialogOpen = false;
 	let unsubscribeTarget = null;
+	// El calendario también sirve para explorar: por defecto incluye eventos sin inscripción.
+	let showAvailable = true;
+	let registering = false;
+
+	function isEnrolled(event) {
+		return Boolean(event?.registration_status);
+	}
+
+	function hasOpenSession(event) {
+		return (event?.sessions || []).some((session) => new Date(session.ends_at) > now);
+	}
+
+	function availabilityText(event) {
+		if (!hasOpenSession(event)) return 'Evento finalizado';
+		const capacity = Number(event?.capacity) || 0;
+		if (event?.capacity_enabled && capacity > 0) {
+			const taken = Number(event?.registrations_count) || 0;
+			return `Inscritos: ${taken} · Disponibles: ${Math.max(capacity - taken, 0)}`;
+		}
+		return 'Disponible para inscripción';
+	}
+
+	function isFull(event) {
+		const capacity = Number(event?.capacity) || 0;
+		return Boolean(event?.capacity_enabled) && capacity > 0 && (Number(event?.registrations_count) || 0) >= capacity;
+	}
+
+	async function registerFromSheet(evt) {
+		if (registering || !evt?.id) return;
+		registering = true;
+		selectedEvent = { ...selectedEvent, primaryDisabled: true, primaryLabel: 'Inscribiendo...' };
+		try {
+			const res = await publicEventsApi.registerToEvent(evt.id, {});
+			toast.success(res?.message || 'Inscripción enviada correctamente.');
+			sheetOpen = false;
+			await loadCalendar();
+		} catch (error) {
+			toast.error(error?.message || 'No se pudo completar la inscripción.');
+			selectedEvent = { ...selectedEvent, primaryDisabled: false, primaryLabel: 'Inscribirse ahora' };
+		} finally {
+			registering = false;
+		}
+	}
+
+	function handleSheetPrimary(evt) {
+		if (evt?.primaryAction === 'view_ticket') openTicket(evt.id);
+		if (evt?.primaryAction === 'register') registerFromSheet(evt);
+	}
 
 	function requestUnsubscribe(evt) {
 		if (evt?.secondaryAction !== 'request_unsubscribe' || evt?.secondaryDisabled) return;
@@ -64,6 +113,7 @@
 
 	function enrollmentLabel(event) {
 		if (event?.status === 'cancelled') return 'Evento cancelado';
+		if (!isEnrolled(event)) return availabilityText(event);
 		if (event?.registration_status === 'pending' || event?.registration_status === 'changes_requested') return 'Solicitud pendiente';
 		if (event?.registration_status === 'cancel_pending') return 'Baja en revisión';
 		return describeAttendanceProgress(event?.attendance) || 'Inscrito';
@@ -99,6 +149,12 @@
 	function openEventSheet(event) {
 		const card = eventCard(event);
 		const enrolled = event.registration_status === 'approved' && event.status !== 'cancelled';
+		const canRegister = !isEnrolled(event) && hasOpenSession(event) && !isFull(event);
+		const primary = canViewTicket(event)
+			? { primaryLabel: 'Ver ticket', primaryDisabled: false, primaryAction: 'view_ticket' }
+			: canRegister
+				? { primaryLabel: 'Inscribirse ahora', primaryDisabled: false, primaryAction: 'register' }
+				: { primaryLabel: enrolled ? null : isFull(event) ? 'Sin cupo' : enrollmentLabel(event), primaryDisabled: true, primaryAction: 'none' };
 		selectedEvent = {
 			id: event.id,
 			coverImageUrl: card.img,
@@ -113,13 +169,11 @@
 			speakerRole: card.organizer,
 			aboutText: card.description || 'Sin descripción',
 			// En la agenda móvil no hay pie de tarjeta: el ticket se abre desde la vista previa.
-			primaryLabel: canViewTicket(event) ? 'Ver ticket' : enrolled ? null : enrollmentLabel(event),
-			primaryDisabled: !canViewTicket(event),
-			primaryAction: canViewTicket(event) ? 'view_ticket' : 'none',
-			secondaryLabel: 'Darme de baja',
+			...primary,
+			secondaryLabel: isEnrolled(event) ? 'Darme de baja' : null,
 			secondaryDisabled: !canRequestUnsubscribe({ registration: { status: event.registration_status }, event, attendance: event.attendance }),
 			secondaryAction: 'request_unsubscribe',
-			availabilityLabel: describeAttendanceProgress(event.attendance),
+			availabilityLabel: isEnrolled(event) ? describeAttendanceProgress(event.attendance) : availabilityText(event),
 			...calendarPreview(event)
 		};
 		dayDialogOpen = false;
@@ -138,7 +192,8 @@
 		return /^https?:\/\//iu.test(String(url || '')) ? `background-image:url(${JSON.stringify(url)})` : '';
 	}
 
-	$: sessionsByDate = events.reduce((map, event) => {
+	$: visibleEvents = showAvailable ? events : events.filter(isEnrolled);
+	$: sessionsByDate = visibleEvents.reduce((map, event) => {
 		event.sessions.forEach((session, index) => {
 			const key = localDateKey(session.starts_at);
 			const entry = { ...session, event, index: index + 1, displayState: sessionDisplayState(session, event) };
@@ -247,6 +302,13 @@
 				<button type="button" class="grid h-10 w-10 place-items-center rounded-full hover:bg-white" aria-label="Mes siguiente" onclick={() => shiftMonth(1)}>
 					<ChevronRight class="h-5 w-5" />
 				</button>
+			</div>
+		</div>
+
+		<div class="flex justify-center">
+			<div class="inline-flex rounded-full border bg-white p-0.5 text-xs font-semibold" role="group" aria-label="Eventos mostrados">
+				<button type="button" aria-pressed={showAvailable} class={`rounded-full px-4 py-1.5 ${showAvailable ? 'bg-blue-600 text-white' : 'text-slate-600'}`} onclick={() => (showAvailable = true)}>Todos</button>
+				<button type="button" aria-pressed={!showAvailable} class={`rounded-full px-4 py-1.5 ${!showAvailable ? 'bg-blue-600 text-white' : 'text-slate-600'}`} onclick={() => (showAvailable = false)}>Mis eventos</button>
 			</div>
 		</div>
 
@@ -365,8 +427,12 @@
 
 	<section class="hidden h-[calc(100dvh-64px)] min-h-[520px] flex-col gap-2 px-2 pt-3 pb-2 sm:px-4 md:flex lg:h-[100dvh] lg:px-6 lg:pt-5">
 		<div class="flex flex-wrap items-center justify-between gap-2">
-			<div class="flex items-center gap-2">
+			<div class="flex flex-wrap items-center gap-3">
 				<h2 class="text-xl font-semibold tracking-tight">Mi calendario</h2>
+				<div class="inline-flex rounded-full border bg-white p-0.5 text-xs font-semibold" role="group" aria-label="Eventos mostrados">
+					<button type="button" aria-pressed={showAvailable} class={`rounded-full px-3 py-1 ${showAvailable ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`} onclick={() => (showAvailable = true)}>Todos</button>
+					<button type="button" aria-pressed={!showAvailable} class={`rounded-full px-3 py-1 ${!showAvailable ? 'bg-blue-600 text-white' : 'text-slate-600 hover:bg-slate-50'}`} onclick={() => (showAvailable = false)}>Mis eventos</button>
+				</div>
 				{#if loading}<span class="text-xs text-muted-foreground">Cargando…</span>{/if}
 			</div>
 			<div class="flex items-center gap-1">
@@ -500,7 +566,7 @@
 <EventDetailSheet
 	bind:open={sheetOpen}
 	event={selectedEvent}
-	onPrimary={(evt) => evt?.primaryAction === 'view_ticket' && openTicket(evt.id)}
+	onPrimary={handleSheetPrimary}
 	onSecondary={requestUnsubscribe}
 />
 

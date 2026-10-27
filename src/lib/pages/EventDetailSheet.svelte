@@ -66,7 +66,7 @@
         </div>
 
         <!-- Body scrolleable -->
-        <div class="min-h-0 flex-1 overflow-y-auto px-5 pt-4">
+        <div class="min-h-0 flex-1 overflow-y-auto px-5 pt-4 [overflow-wrap:anywhere]">
           {#if event.categoryLabel}
             <div class="text-[11px] font-semibold tracking-widest text-blue-700">
               {event.categoryLabel}
