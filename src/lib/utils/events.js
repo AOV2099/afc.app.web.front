@@ -51,6 +51,23 @@ export function isVisibleToUser(event, now = Date.now()) {
 	return localDateKey(rawEndsAt) === localDateKey(now);
 }
 
+/** Explorar del alumno: visibles hasta que acaba su día (CDMX); al terminar la tarjeta queda deshabilitada. */
+export function exploreEventsForStudent(events, now = Date.now()) {
+	return (events || []).filter((event) => isVisibleToUser(event, now));
+}
+
+/** Mismo criterio que el back: libre abierta hasta que termina; con revisión manual cierra al iniciar. */
+export function isRegistrationOpen(event, now = Date.now()) {
+	const status = String(event?.status || event?.raw?.status || '').trim().toLowerCase();
+	if (status === 'ended' || status === 'cancelled' || isPastEvent(event, now)) return false;
+
+	const mode = String(event?.registration_mode ?? event?.raw?.registration_mode ?? 'auto');
+	if (mode === 'auto') return true;
+
+	const startsAt = new Date(event?.starts_at ?? event?.startsAt ?? event?.raw?.starts_at).getTime();
+	return !Number.isFinite(startsAt) || startsAt > Number(now);
+}
+
 export function isFutureEvent(event, now = Date.now()) {
 	const status = String(event?.status || event?.raw?.status || '').trim().toLowerCase();
 	if (status === 'ended' || status === 'cancelled') return false;

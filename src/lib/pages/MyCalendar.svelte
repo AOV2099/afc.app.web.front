@@ -17,6 +17,7 @@
 		sessionDisplayState
 	} from '$lib/utils/eventSessions.js';
 	import { formatEventSchedule, mapEventToCard, resolveEventImage } from '$lib/utils/eventCards.js';
+	import { isRegistrationOpen } from '$lib/utils/events.js';
 	import { panelIn } from '$lib/utils/motion.js';
 	import { ChevronLeft, ChevronRight } from 'lucide-svelte';
 
@@ -55,6 +56,7 @@
 
 	function availabilityText(event) {
 		if (!hasOpenSession(event)) return 'Evento finalizado';
+		if (!isRegistrationOpen(event, now)) return 'Inscripciones cerradas';
 		const capacity = Number(event?.capacity) || 0;
 		if (event?.capacity_enabled && capacity > 0) {
 			const taken = Number(event?.registrations_count) || 0;
@@ -149,7 +151,7 @@
 	function openEventSheet(event) {
 		const card = eventCard(event);
 		const enrolled = event.registration_status === 'approved' && event.status !== 'cancelled';
-		const canRegister = !isEnrolled(event) && hasOpenSession(event) && !isFull(event);
+		const canRegister = !isEnrolled(event) && hasOpenSession(event) && isRegistrationOpen(event, now) && !isFull(event);
 		const primary = canViewTicket(event)
 			? { primaryLabel: 'Ver ticket', primaryDisabled: false, primaryAction: 'view_ticket' }
 			: canRegister

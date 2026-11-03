@@ -50,14 +50,14 @@ export function catalogLabel(catalog, value, fallback = "Sin dato") {
 export const EVENT_REGISTRATION_MODE_CATALOG = {
 	auto: {
 		value: "auto",
-		label: "Automático",
-		description: "La inscripción se aprueba al instante y el alumno recibe su ticket."
+		label: "Libre",
+		description: "La inscripción se aprueba al instante y el alumno recibe su ticket. Los alumnos pueden inscribirse aun después de que el evento inicia, hasta que termina."
 	},
 	manual_review: {
 		value: "manual_review",
 		label: "Revisión manual",
 		description:
-			"La inscripción queda pendiente hasta que el organizador la aprueba en Solicitudes; al aprobarla se emite el ticket."
+			"La inscripción queda pendiente hasta que el organizador la aprueba en Solicitudes; al aprobarla se emite el ticket. Las inscripciones cierran cuando inicia el evento."
 	}
 };
 

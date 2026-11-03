@@ -8,9 +8,9 @@
   import {
     DEFAULT_EVENT_STATUS_FILTER,
     eventStatusesQueryValue,
-    isFutureEvent,
+    exploreEventsForStudent,
     isPastEvent,
-    isVisibleToUser
+    isRegistrationOpen
   } from '$lib/utils/events.js';
   import { attendancePreview, canRequestUnsubscribe, describeAttendanceProgress } from '$lib/utils/eventSessions.js';
   import { mapEventToCard } from '$lib/utils/eventCards.js';
@@ -170,7 +170,7 @@
       }
 
       if (registrationStatus === 'rejected') {
-        const canReapply = item?.raw?.resubmission_policy === 'allowed' && !isPastEvent(item);
+        const canReapply = item?.raw?.resubmission_policy === 'allowed' && isRegistrationOpen(item);
         return {
           label: canReapply ? 'Volver a solicitar' : 'Solicitud rechazada',
           disabled: !canReapply,
@@ -194,6 +194,19 @@
         secondaryDisabled: true,
         secondaryAction: 'none',
         availabilityLabel: 'Este evento ya finalizó.'
+      };
+    }
+
+    if (!isRegistrationOpen(item)) {
+      return {
+        label: 'Inscripciones cerradas',
+        disabled: true,
+        action: 'none',
+        ticket: null,
+        secondaryLabel: null,
+        secondaryDisabled: true,
+        secondaryAction: 'none',
+        availabilityLabel: 'Este evento requiere aprobación y ya inició; las inscripciones cerraron.'
       };
     }
 
@@ -301,10 +314,8 @@
             starts_to: query.starts_to
           });
       const events = Array.isArray(res?.events) ? res.events : [];
-          const mapped = await enrichWithRegistrationsCount(events.map(mapAdminEventToUi));
-          const visible = adminMode ? mapped : mapped.filter((item) => isVisibleToUser(item, now));
-
-          upcoming = adminMode ? visible : visible.filter((item) => isFutureEvent(item, now));
+      const mapped = await enrichWithRegistrationsCount(events.map(mapAdminEventToUi));
+      upcoming = adminMode ? mapped : exploreEventsForStudent(mapped, now);
       pagination = res?.pagination || pagination;
       filters = { ...filters, ...query };
     } catch (err) {

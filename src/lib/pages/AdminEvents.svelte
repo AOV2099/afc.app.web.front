@@ -1464,7 +1464,7 @@
               class="h-10 w-full rounded-md border px-3"
               bind:value={editForm.registrationMode}
             >
-              <option value="auto">Automático</option>
+              <option value="auto">Libre</option>
               <option value="manual_review">Revisión manual</option>
             </select>
           </div>
