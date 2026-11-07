@@ -1,4 +1,5 @@
-import { expect, request, test } from '@playwright/test';
+import { expect, test } from '@playwright/test';
+import { apiLogin } from './helpers/session.js';
 
 /*
  * Check-in del staff con y sin geolocalización.
@@ -18,13 +19,6 @@ let visitor;
 let staff;
 let staffUserId;
 let otherStaffUserId;
-
-async function apiLogin(email, password) {
-	const ctx = await request.newContext({ baseURL: env.AFC_E2E_BASE_URL, ignoreHTTPSErrors: true });
-	const res = await ctx.post('/api/login', { data: { email, password } });
-	expect(res.ok(), `login ${email}`).toBeTruthy();
-	return ctx;
-}
 
 function mexicoDay(date) {
 	return new Intl.DateTimeFormat('en-CA', { timeZone: TIMEZONE }).format(date);

@@ -10,8 +10,12 @@
   import { scaleTime } from "d3-scale";
   import {
     getEventDashboard,
+    getEventReport,
     getEventTimeline,
   } from "$lib/services/adminEventsApi";
+  import { isPastEvent } from "$lib/utils/events.js";
+  import { downloadCsv } from "$lib/utils/csv.js";
+  import { buildEventReportCsv, careerBreakdown, eventReportFilename, formatCheckinDateTime, summarizeEventReport } from "$lib/utils/eventReport.js";
   import {
     EVENT_REGISTRATION_MODE_CATALOG,
     EVENT_STATUS_CATALOG,
@@ -19,6 +23,7 @@
   } from "../../routes/store";
   import {
     ArrowLeft,
+    Download,
     RefreshCcw,
     Users,
     UserCheck,
@@ -97,25 +102,8 @@
       event: null,
       registration_stats: {
         registrations_count: 0,
-        approved_count: 0,
         pending_count: 0,
-      },
-      live: {
-        session: null,
-        stats: {
-          accepted: 0,
-          rejected: 0,
-          duplicate: 0,
-          invalid_ticket: 0,
-          cancelled_ticket: 0,
-          total: 0,
-          present_users: 0,
-        },
-      },
-      activity_series: {
-        views: [],
-        inscriptions: [],
-        checkins: [],
+        rejected_checkins_count: 0,
       },
       recent_activity_stack: [],
     };
@@ -127,7 +115,6 @@
   let error = "";
   let dashboard = createEmptyDashboard();
   let dashboardRegistrationStats = {};
-  let dashboardLiveStats = {};
   let timelineSeries = {
     inscriptions: [],
     views: [],
@@ -142,13 +129,44 @@
   let checkinsLineData = [];
   let recentActivityItems = [];
   let viewGranularity = "minutes";
-  let selectedSessionId = null;
   let lastViewsDebugSignature = "";
   let refreshCooldownSeconds = 0;
   let hasDashboardLoaded = false;
   let intervalId;
   let cooldownIntervalId;
+  let downloadingReport = false;
+  let reportRows = [];
+  let reportFilter = "all";
+  let reportSearch = "";
   const DEBUG_DASHBOARD_LOGS = dev;
+
+  $: eventFinished = Boolean(dashboard?.event) && isPastEvent(dashboard.event);
+  $: reportSummary = summarizeEventReport(reportRows);
+  $: reportCareers = careerBreakdown(reportRows);
+  $: visibleReportRows = filterReportRows(reportRows, reportFilter, reportSearch);
+
+  function filterReportRows(rows, filter, search) {
+    const term = search.trim().toLowerCase();
+    return rows.filter((row) => {
+      if (filter === "attended" && !row.check_in) return false;
+      if (filter === "absent" && row.check_in) return false;
+      if (!term) return true;
+      return [row.numero_cuenta, row.correo, row.carrera].some((value) => String(value || "").toLowerCase().includes(term));
+    });
+  }
+
+  async function downloadReport() {
+    if (downloadingReport) return;
+    downloadingReport = true;
+    try {
+      const res = await getEventReport(eventId);
+      downloadCsv(buildEventReportCsv(res?.rows), eventReportFilename(eventId));
+    } catch (e) {
+      error = e?.message || "No se pudo descargar el reporte.";
+    } finally {
+      downloadingReport = false;
+    }
+  }
 
   function goBack() {
     goto("/admin/events");
@@ -234,105 +252,10 @@
   }
 
   function syncDashboardDerivedState(source) {
-    const toNumber = (value) => Number(value ?? 0) || 0;
-    const pickPreferredCount = (primaryValue, ...fallbackValues) => {
-      const primary = toNumber(primaryValue);
-      if (primary > 0) return primary;
-
-      for (const fallback of fallbackValues) {
-        const candidate = toNumber(fallback);
-        if (candidate > 0) return candidate;
-      }
-
-      return primary;
-    };
-
-    const rawRegistrationStats = source?.registration_stats || {};
-    const rawLiveStats =
-      source?.live?.stats || source?.live_stats || source?.checkin_stats || {};
-    const rawActivitySeries = source?.activity_series || {};
-    const rawCheckinsBreakdown = rawActivitySeries?.checkins_breakdown || {};
-    const rawRegistrationsBreakdown =
-      rawActivitySeries?.registrations_breakdown || {};
-
+    const stats = source?.registration_stats || {};
     dashboardRegistrationStats = {
-      registrations_count: pickPreferredCount(
-        rawRegistrationStats?.registrations_count,
-        rawRegistrationStats?.count,
-        rawActivitySeries?.inscriptions_count,
-        rawRegistrationsBreakdown?.inscripciones,
-        rawRegistrationsBreakdown?.inscription,
-        rawRegistrationsBreakdown?.inscriptions,
-        rawRegistrationStats?.total_registrations,
-        rawRegistrationStats?.total,
-      ),
-      approved_count: pickPreferredCount(
-        rawRegistrationStats?.approved_count,
-        rawRegistrationStats?.approved,
-        rawRegistrationStats?.accepted,
-        rawRegistrationsBreakdown?.inscripciones,
-      ),
-      pending_count: pickPreferredCount(
-        rawRegistrationStats?.pending_count,
-        rawRegistrationStats?.pending,
-        rawRegistrationStats?.in_review,
-        rawRegistrationsBreakdown?.solicitudes_inscripcion,
-        rawRegistrationsBreakdown?.inscription_request,
-        rawRegistrationsBreakdown?.inscription_requests,
-      ),
-    };
-
-    dashboardLiveStats = {
-      accepted: pickPreferredCount(
-        rawLiveStats?.accepted,
-        rawLiveStats?.accepted_count,
-        rawCheckinsBreakdown?.exitosos,
-        rawCheckinsBreakdown?.accepted,
-        rawCheckinsBreakdown?.accepted_count,
-      ),
-      rejected: pickPreferredCount(
-        rawLiveStats?.rejected,
-        rawLiveStats?.rejected_count,
-        rawCheckinsBreakdown?.rechazados,
-        rawCheckinsBreakdown?.rejected,
-        rawCheckinsBreakdown?.rejected_count,
-      ),
-      duplicate: pickPreferredCount(
-        rawLiveStats?.duplicate,
-        rawLiveStats?.duplicates,
-        rawLiveStats?.duplicate_count,
-        rawCheckinsBreakdown?.duplicados,
-        rawCheckinsBreakdown?.duplicate,
-        rawCheckinsBreakdown?.duplicates,
-      ),
-      invalid_ticket: pickPreferredCount(
-        rawLiveStats?.invalid_ticket,
-        rawLiveStats?.invalid,
-        rawLiveStats?.invalid_count,
-        rawCheckinsBreakdown?.ticket_invalido,
-        rawCheckinsBreakdown?.invalid_ticket,
-        rawCheckinsBreakdown?.invalid,
-      ),
-      cancelled_ticket: pickPreferredCount(
-        rawLiveStats?.cancelled_ticket,
-        rawLiveStats?.cancelled,
-        rawLiveStats?.canceled,
-        rawLiveStats?.cancelled_count,
-        rawCheckinsBreakdown?.ticket_cancelado,
-        rawCheckinsBreakdown?.cancelled_ticket,
-        rawCheckinsBreakdown?.canceled_ticket,
-      ),
-      total: pickPreferredCount(
-        rawLiveStats?.total,
-        rawLiveStats?.total_attempts,
-        rawLiveStats?.scans_total,
-        rawActivitySeries?.checkins_count,
-      ),
-      present_users: pickPreferredCount(
-        rawLiveStats?.present_users,
-        rawLiveStats?.present,
-        rawLiveStats?.checked_in_users,
-      ),
+      pending_count: Number(stats.pending_count ?? 0) || 0,
+      rejected_checkins_count: Number(stats.rejected_checkins_count ?? 0) || 0,
     };
   }
 
@@ -784,12 +707,9 @@
     error = "";
 
     try {
-      const [dashboardRes, insTimeline, viewTimeline, checkinTimeline] =
+      const [dashboardRes, insTimeline, viewTimeline, checkinTimeline, reportRes] =
         await Promise.all([
-          getEventDashboard(eventId, {
-            sessionId: selectedSessionId,
-            recentLimit: 30,
-          }),
+          getEventDashboard(eventId),
           getEventTimeline(eventId, {
             type: "inscriptions",
             limit: 2000,
@@ -802,20 +722,15 @@
             type: "checkins",
             limit: 2000,
           }).catch(() => ({ timeline: [] })),
+          getEventReport(eventId).catch(() => null),
         ]);
+
+      if (reportRes) reportRows = Array.isArray(reportRes.rows) ? reportRes.rows : [];
 
       const normalizedDashboard = normalizeDashboardResponse(dashboardRes);
       dashboard = {
         ...createEmptyDashboard(),
         ...normalizedDashboard,
-        live: {
-          ...createEmptyDashboard().live,
-          ...(normalizedDashboard?.live || {}),
-          stats: {
-            ...createEmptyDashboard().live.stats,
-            ...(normalizedDashboard?.live?.stats || {}),
-          },
-        },
         registration_stats: {
           ...createEmptyDashboard().registration_stats,
           ...(normalizedDashboard?.registration_stats || {}),
@@ -823,12 +738,6 @@
       };
       syncDashboardDerivedState(dashboard);
       hasDashboardLoaded = true;
-      if (
-        selectedSessionId == null &&
-        Number.isInteger(Number(normalizedDashboard?.live?.session?.id))
-      ) {
-        selectedSessionId = Number(normalizedDashboard.live.session.id);
-      }
       rawInscriptionsTimeline = Array.isArray(insTimeline?.timeline)
         ? insTimeline.timeline
         : [];
@@ -912,42 +821,55 @@
 </script>
 
 <div class="mx-auto w-full max-w-screen-xl px-4 pb-16 pt-6 sm:px-6 lg:px-8">
-  <div class="flex items-center justify-between gap-3">
-    <h1 class="text-2xl font-semibold tracking-tight sm:text-3xl">
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <h1 class="min-w-0 text-xl font-semibold tracking-tight [overflow-wrap:anywhere] sm:text-3xl">
       Métricas · {eventTitle(dashboard)}
     </h1>
-    <div class="flex items-center gap-2">
+    <div class="flex w-full items-center gap-2 sm:w-auto">
+      <Button variant="outline" class="rounded-xl" onclick={goBack} aria-label="Volver">
+        <ArrowLeft class="h-4 w-4 sm:mr-2" />
+        <span class="hidden sm:inline">Volver</span>
+      </Button>
       <Button
         variant="outline"
         class="rounded-xl"
         onclick={handleManualRefresh}
         disabled={loading || refreshCooldownSeconds > 0}
+        aria-label="Actualizar"
       >
-        <RefreshCcw class="mr-2 h-4 w-4" />
-        {refreshing
-          ? "Actualizando..."
-          : refreshCooldownSeconds > 0
-            ? `Actualizar (${refreshCooldownSeconds}s)`
-            : "Actualizar"}
+        <RefreshCcw class="h-4 w-4 sm:mr-2" />
+        <span class="hidden sm:inline">
+          {refreshing
+            ? "Actualizando..."
+            : refreshCooldownSeconds > 0
+              ? `Actualizar (${refreshCooldownSeconds}s)`
+              : "Actualizar"}
+        </span>
       </Button>
-      <Button variant="outline" class="rounded-xl" onclick={goBack}>
-        <ArrowLeft class="mr-2 h-4 w-4" />
-        Volver
-      </Button>
+      {#if eventFinished}
+        <Button
+          class="flex-1 rounded-xl bg-blue-600 text-white hover:bg-blue-700 sm:flex-none"
+          onclick={downloadReport}
+          disabled={downloadingReport}
+        >
+          <Download class="mr-2 h-4 w-4" />
+          {downloadingReport ? "Descargando..." : "Descargar reporte"}
+        </Button>
+      {/if}
     </div>
   </div>
 
   {#if dashboard?.event}
     <div
-      class="mt-3 flex flex-wrap items-center gap-2 text-sm text-muted-foreground"
+      class="mt-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground"
     >
       <Badge class="rounded-full bg-slate-100 text-slate-700 hover:bg-slate-100"
         >{catalogLabel(EVENT_STATUS_CATALOG, dashboard.event.status)}</Badge
       >
       <span>Modo de registro: {catalogLabel(EVENT_REGISTRATION_MODE_CATALOG, dashboard.event.registration_mode)}</span
       >
-      <span>•</span>
-      <span>{eventDateRange(dashboard)}</span>
+      <span class="hidden sm:inline">•</span>
+      <span class="w-full sm:w-auto">{eventDateRange(dashboard)}</span>
     </div>
   {/if}
 
@@ -958,127 +880,171 @@
   {#if loading}
     <div class="mt-4 text-sm text-muted-foreground">Cargando métricas...</div>
   {:else if dashboard}
-    <div class="mt-4 grid gap-4">
+    <div class="mt-4 grid grid-cols-[minmax(0,1fr)] gap-4">
+      <div class="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-2">
+        <Card>
+          <CardContent class="p-3 sm:p-4">
+            <div class="mb-3 text-sm font-semibold">Estado general del evento</div>
+            <div class="grid grid-cols-3 gap-2 sm:gap-3" data-testid="metrics-kpis">
+              <div class="rounded-lg border p-2 sm:p-3">
+                <div class="flex items-center gap-2 text-xs leading-tight text-muted-foreground sm:text-sm">
+                  <Users class="hidden h-4 w-4 text-slate-600 sm:block" />Inscritos
+                </div>
+                <div class="mt-1 text-xl font-semibold sm:text-2xl">{reportSummary.registered}</div>
+              </div>
+              <div class="rounded-lg border border-emerald-200 bg-emerald-50 p-2 sm:p-3">
+                <div class="flex items-center gap-2 text-xs leading-tight text-emerald-700 sm:text-sm">
+                  <UserCheck class="hidden h-4 w-4 sm:block" />Asistieron
+                </div>
+                <div class="mt-1 text-xl font-semibold text-emerald-700 sm:text-2xl">{reportSummary.attended}</div>
+              </div>
+              <div class="rounded-lg border border-amber-200 bg-amber-50 p-2 sm:p-3">
+                <div class="flex items-center gap-2 text-xs leading-tight text-amber-700 sm:text-sm">
+                  <UserMinus class="hidden h-4 w-4 sm:block" />Sin asistencia
+                </div>
+                <div class="mt-1 text-xl font-semibold text-amber-700 sm:text-2xl">{reportSummary.absent}</div>
+              </div>
+              {#if dashboard?.event?.registration_mode === "manual_review"}
+                <div class="rounded-lg border p-2 sm:p-3">
+                  <div class="flex items-center gap-2 text-xs leading-tight text-muted-foreground sm:text-sm">
+                    <Clock3 class="hidden h-4 w-4 text-amber-600 sm:block" />Pendientes de aprobación
+                  </div>
+                  <div class="mt-1 text-xl font-semibold sm:text-2xl">{dashboardRegistrationStats?.pending_count ?? 0}</div>
+                </div>
+              {/if}
+              {#if (dashboardRegistrationStats?.rejected_checkins_count ?? 0) > 0}
+                <div class="rounded-lg border p-2 sm:p-3">
+                  <div class="flex items-center gap-2 text-xs leading-tight text-muted-foreground sm:text-sm">
+                    <XCircle class="hidden h-4 w-4 text-red-600 sm:block" />Check-ins rechazados
+                  </div>
+                  <div class="mt-1 text-xl font-semibold sm:text-2xl">{dashboardRegistrationStats.rejected_checkins_count}</div>
+                </div>
+              {/if}
+            </div>
+            <div class="mt-4">
+              <div class="mb-1 flex justify-between text-sm">
+                <span class="text-muted-foreground">Asistencia</span>
+                <span class="font-semibold">{reportSummary.rate}%</span>
+              </div>
+              <div class="h-3 overflow-hidden rounded-full bg-slate-100">
+                <div class="h-full rounded-full bg-emerald-500 transition-all" style={`width: ${reportSummary.rate}%`}></div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardContent class="p-4">
+            <div class="mb-3 text-sm font-semibold">Por carrera</div>
+            {#if !reportCareers.length}
+              <div class="text-sm text-muted-foreground">Sin inscritos todavía.</div>
+            {:else}
+              <div class="max-h-[220px] space-y-3 overflow-y-auto pr-1" data-testid="metrics-career-breakdown">
+                {#each reportCareers as item (item.career)}
+                  <div>
+                    <div class="flex items-baseline justify-between gap-3 text-sm">
+                      <span class="min-w-0 truncate" title={item.career}>{item.career}</span>
+                      <span class="shrink-0 tabular-nums text-muted-foreground">
+                        {item.attended} de {item.registered} · {item.rate}%
+                      </span>
+                    </div>
+                    <div class="mt-1 h-2 overflow-hidden rounded-full bg-slate-100">
+                      <div class="h-full rounded-full bg-blue-500" style={`width: ${item.rate}%`}></div>
+                    </div>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </CardContent>
+        </Card>
+      </div>
+
       <Card>
         <CardContent class="p-4">
-          <div class="mb-3 text-sm font-semibold">
-            Estado general del evento
-          </div>
-          <div class="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <div
-              class="flex items-center justify-between rounded-lg border p-3"
-            >
-              <div
-                class="flex items-center gap-2 text-sm text-muted-foreground"
+          <div class="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <div class="text-sm font-semibold">Lista de inscritos</div>
+            <div class="flex w-full items-center gap-2 sm:w-auto">
+              <input
+                type="search"
+                bind:value={reportSearch}
+                placeholder="Buscar cuenta, correo o carrera"
+                aria-label="Buscar inscrito"
+                class="h-9 min-w-0 flex-1 rounded-md border border-input bg-background px-3 text-sm sm:w-56 sm:flex-none"
+              />
+              <select
+                bind:value={reportFilter}
+                aria-label="Filtrar por asistencia"
+                class="h-9 rounded-md border border-input bg-background px-2 text-sm"
               >
-                <Users class="h-4 w-4 text-slate-600" />Inscritos
-              </div>
-              <div class="text-xl font-semibold">
-                {dashboardRegistrationStats?.registrations_count ?? 0}
-              </div>
-            </div>
-            <div
-              class="flex items-center justify-between rounded-lg border p-3"
-            >
-              <div
-                class="flex items-center gap-2 text-sm text-muted-foreground"
-              >
-                <UserCheck class="h-4 w-4 text-emerald-600" />Aprobados
-              </div>
-              <div class="text-xl font-semibold">
-                {dashboardRegistrationStats?.approved_count ?? 0}
-              </div>
-            </div>
-            <div
-              class="flex items-center justify-between rounded-lg border p-3"
-            >
-              <div
-                class="flex items-center gap-2 text-sm text-muted-foreground"
-              >
-                <Clock3 class="h-4 w-4 text-amber-600" />Pendientes
-              </div>
-              <div class="text-xl font-semibold">
-                {dashboardRegistrationStats?.pending_count ?? 0}
-              </div>
-            </div>
-            <div
-              class="flex items-center justify-between rounded-lg border p-3"
-            >
-              <div
-                class="flex items-center gap-2 text-sm text-muted-foreground"
-              >
-                <CheckCircle2 class="h-4 w-4 text-emerald-600" />Aceptados
-              </div>
-              <div class="text-xl font-semibold">
-                {dashboardLiveStats?.accepted ?? 0}
-              </div>
-            </div>
-            <div
-              class="flex items-center justify-between rounded-lg border p-3"
-            >
-              <div
-                class="flex items-center gap-2 text-sm text-muted-foreground"
-              >
-                <XCircle class="h-4 w-4 text-red-600" />Rechazados
-              </div>
-              <div class="text-xl font-semibold">
-                {dashboardLiveStats?.rejected ?? 0}
-              </div>
-            </div>
-            <div
-              class="flex items-center justify-between rounded-lg border p-3"
-            >
-              <div
-                class="flex items-center gap-2 text-sm text-muted-foreground"
-              >
-                <Copy class="h-4 w-4 text-orange-500" />Duplicados
-              </div>
-              <div class="text-xl font-semibold">
-                {dashboardLiveStats?.duplicate ?? 0}
-              </div>
-            </div>
-            <div
-              class="flex items-center justify-between rounded-lg border p-3"
-            >
-              <div
-                class="flex items-center gap-2 text-sm text-muted-foreground"
-              >
-                <AlertTriangle class="h-4 w-4 text-rose-600" />Inválidos
-              </div>
-              <div class="text-xl font-semibold">
-                {(dashboardLiveStats?.invalid_ticket ?? 0) +
-                  (dashboardLiveStats?.cancelled_ticket ?? 0)}
-              </div>
-            </div>
-            <div
-              class="flex items-center justify-between rounded-lg border p-3"
-            >
-              <div
-                class="flex items-center gap-2 text-sm text-muted-foreground"
-              >
-                <ScanLine class="h-4 w-4 text-cyan-600" />Total intentos
-              </div>
-              <div class="text-xl font-semibold">
-                {dashboardLiveStats?.total ?? 0}
-              </div>
-            </div>
-            <div
-              class="flex items-center justify-between rounded-lg border p-3"
-            >
-              <div
-                class="flex items-center gap-2 text-sm text-muted-foreground"
-              >
-                <Users class="h-4 w-4 text-blue-600" />Presentes
-              </div>
-              <div class="text-xl font-semibold">
-                {dashboardLiveStats?.present_users ?? 0}
-              </div>
+                <option value="all">Todos</option>
+                <option value="attended">Asistieron</option>
+                <option value="absent">Sin asistencia</option>
+              </select>
             </div>
           </div>
+          {#if !visibleReportRows.length}
+            <div class="py-6 text-center text-sm text-muted-foreground">
+              {reportRows.length ? "Ningún inscrito coincide con el filtro." : "Este evento aún no tiene inscritos."}
+            </div>
+          {:else}
+            <ul class="max-h-[480px] divide-y overflow-y-auto rounded-lg border sm:hidden" data-testid="metrics-registrants-list">
+              {#each visibleReportRows as row, index (`m-${row.correo}-${index}`)}
+                <li class="space-y-1 p-3 text-sm">
+                  <div class="flex items-center justify-between gap-2">
+                    <span class="font-semibold tabular-nums">{row.numero_cuenta || "Sin número de cuenta"}</span>
+                    {#if row.check_in}
+                      <Badge class="rounded-full bg-emerald-100 text-emerald-800 hover:bg-emerald-100">Asistió</Badge>
+                    {:else}
+                      <Badge class="rounded-full bg-slate-100 text-slate-600 hover:bg-slate-100">Sin asistencia</Badge>
+                    {/if}
+                  </div>
+                  <div class="text-muted-foreground [overflow-wrap:anywhere]">{row.correo || ""}</div>
+                  {#if row.carrera}<div class="text-xs text-muted-foreground">{row.carrera}</div>{/if}
+                  {#each row.checkins || [] as checkin}
+                    <div class="text-xs tabular-nums text-emerald-700">Check-in: {formatCheckinDateTime(checkin)}</div>
+                  {/each}
+                </li>
+              {/each}
+            </ul>
+            <div class="hidden max-h-[420px] overflow-auto rounded-lg border sm:block">
+              <table class="w-full min-w-[720px] text-left text-sm" data-testid="metrics-registrants-table">
+                <thead class="sticky top-0 border-b bg-slate-50 text-xs uppercase text-muted-foreground">
+                  <tr>
+                    <th class="px-3 py-2 font-medium">Número de cuenta</th>
+                    <th class="px-3 py-2 font-medium">Correo</th>
+                    <th class="px-3 py-2 font-medium">Carrera</th>
+                    <th class="px-3 py-2 font-medium">Check-in</th>
+                    <th class="px-3 py-2 font-medium">Fecha y hora</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {#each visibleReportRows as row, index (`${row.correo}-${index}`)}
+                    <tr class="border-b last:border-0">
+                      <td class="px-3 py-2 font-medium tabular-nums">{row.numero_cuenta || ""}</td>
+                      <td class="px-3 py-2 [overflow-wrap:anywhere]">{row.correo || ""}</td>
+                      <td class="px-3 py-2">{row.carrera || ""}</td>
+                      <td class="px-3 py-2">
+                        {#if row.check_in}
+                          <Badge class="rounded-full bg-emerald-100 text-emerald-800 hover:bg-emerald-100">Sí</Badge>
+                        {:else}
+                          <Badge class="rounded-full bg-slate-100 text-slate-600 hover:bg-slate-100">No</Badge>
+                        {/if}
+                      </td>
+                      <td class="whitespace-nowrap px-3 py-2 tabular-nums">
+                        {#each row.checkins || [] as checkin}
+                          <div>{formatCheckinDateTime(checkin)}</div>
+                        {/each}
+                      </td>
+                    </tr>
+                  {/each}
+                </tbody>
+              </table>
+            </div>
+          {/if}
         </CardContent>
       </Card>
 
-      <div class="grid gap-4 lg:grid-cols-2">
+      <div class="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-2">
         <Card>
           <CardContent class="p-4">
             <div class="mb-3 flex items-center justify-between gap-2">
@@ -1096,7 +1062,7 @@
             </div>
             <Chart.Container
               config={lineChartConfig}
-              class="h-[350px] max-h-[350px] w-full"
+              class="h-[220px] max-h-[220px] w-full sm:h-[350px] sm:max-h-[350px]"
             >
               <AreaChart
                 data={viewsLineData}
@@ -1144,7 +1110,7 @@
             </div>
             <Chart.Container
               config={inscriptionsChartConfig}
-              class="h-[350px] max-h-[350px] w-full"
+              class="h-[220px] max-h-[220px] w-full sm:h-[350px] sm:max-h-[350px]"
             >
               <AreaChart
                 data={inscriptionsLineData}
@@ -1192,7 +1158,7 @@
             </div>
             <Chart.Container
               config={checkinsChartConfig}
-              class="h-[350px] max-h-[350px] w-full"
+              class="h-[220px] max-h-[220px] w-full sm:h-[350px] sm:max-h-[350px]"
             >
               <AreaChart
                 data={checkinsLineData}
@@ -1248,7 +1214,7 @@
               </div>
             {:else}
               <div
-                class="h-[350px] max-h-[350px] space-y-2 overflow-y-auto pr-1"
+                class="max-h-[280px] space-y-2 overflow-y-auto pr-1 sm:h-[350px] sm:max-h-[350px]"
               >
                 {#each recentActivityItems as item (item.id)}
                   <div class="flex items-start gap-3 rounded-lg border p-3">

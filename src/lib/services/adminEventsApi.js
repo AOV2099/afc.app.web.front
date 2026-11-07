@@ -112,6 +112,10 @@ export function getEventTimeline(eventId, { type, from, to, limit } = {}) {
 	});
 }
 
+export function getEventReport(eventId) {
+	return request(`/api/admin/events/${encodeURIComponent(eventId)}/report`, { method: 'GET' });
+}
+
 export function scanEventCheckin(payload) {
 	return request('/api/admin/events/checkins/scan', {
 		method: 'POST',
@@ -122,6 +126,7 @@ export function scanEventCheckin(payload) {
 const adminEventsApi = {
 	getEventDashboard,
 	getEventTimeline,
+	getEventReport,
 	scanEventCheckin
 };
 

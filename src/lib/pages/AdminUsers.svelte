@@ -15,10 +15,14 @@
 		HOURS_CSV_MAX_ROWS,
 		HOURS_CSV_TEMPLATE,
 		HOURS_CSV_TEMPLATE_FILENAME,
+		buildHoursReportCsv,
+		hoursReportFilename,
 		normalizeHoursCsvErrors,
 		validateHoursCsvFile,
 		validateHoursCsvText
 	} from '$lib/services/hoursCsvImport';
+	import { downloadCsv } from '$lib/utils/csv.js';
+	import { countActiveUserFilters, loadUserFilters, saveUserFilters } from '$lib/services/adminUserFilters';
 	import {
 		buildAdminUserCreatePayload,
 		buildAdminUserEditPayload,
@@ -56,7 +60,8 @@
 		ArrowUpDown,
 		ArrowUp,
 		ArrowDown,
-		Clock3
+		Clock3,
+		SlidersHorizontal
 	} from 'lucide-svelte';
 
 	import {
@@ -92,6 +97,7 @@
 	let filtersTimeout;
 	let filtersKey = '';
 	let loadedFiltersKey = '';
+	let filtersDialogOpen = false;
 
 	let page = 1;
 	let pageSize = 50;
@@ -134,6 +140,8 @@
 	let hoursImportErrors = [];
 	let hoursImportPreviewLoading = false;
 	let hoursImportCommitLoading = false;
+	let hoursImportResultOpen = false;
+	let hoursImportResult = null;
 
 	let importUploadOpen = false;
 	let importConfirmationOpen = false;
@@ -459,16 +467,12 @@
 	}
 
 	function downloadHoursCsvTemplate() {
-		if (typeof document === 'undefined') return;
-		const blob = new Blob([HOURS_CSV_TEMPLATE], { type: 'text/csv;charset=utf-8' });
-		const url = URL.createObjectURL(blob);
-		const link = document.createElement('a');
-		link.href = url;
-		link.download = HOURS_CSV_TEMPLATE_FILENAME;
-		document.body.appendChild(link);
-		link.click();
-		link.remove();
-		URL.revokeObjectURL(url);
+		downloadCsv(HOURS_CSV_TEMPLATE, HOURS_CSV_TEMPLATE_FILENAME);
+	}
+
+	function downloadHoursReport() {
+		if (!hoursImportResult) return;
+		downloadCsv(buildHoursReportCsv(hoursImportResult.report), hoursReportFilename());
 	}
 
 	async function previewHoursImport() {
@@ -514,15 +518,16 @@
 		try {
 			const response = await adminUsersApi.commitHoursCsv(hoursImportId);
 			if (!response?.ok) throw new Error(response?.message || 'No se pudo completar la carga.');
-			const importedHours = Number(response.total_hours || 0);
-			const cappedRows = Number(response.capped_rows || 0);
-			toast.success(
-				importedHours > 0 && cappedRows === 0
-					? `Se han agregado ${importedHours.toLocaleString('es-MX', { maximumFractionDigits: 2 })} hrs en ${Number(response.adjusted || 0)} ajustes.`
-					: 'Procesado correctamente.'
-			);
+			hoursImportResult = {
+				adjusted: Number(response.adjusted || 0),
+				users: Number(response.users || 0),
+				totalHours: Number(response.total_hours || 0),
+				cappedRows: Number(response.capped_rows || 0),
+				report: Array.isArray(response.report) ? response.report : []
+			};
 			hoursImportOpen = false;
 			resetHoursImport();
+			hoursImportResultOpen = true;
 			await loadUsers();
 		} catch (error) {
 			hoursImportErrors = normalizeHoursCsvErrors(error);
@@ -970,6 +975,18 @@
 			pageSize = defaultPageSize;
 		}
 
+		const saved = loadUserFilters(window.localStorage, {
+			roleOptions,
+			statusOptions,
+			sortFields: sortableColumns.map((column) => column.field)
+		});
+		roleFilter = saved.roleFilter;
+		statusFilter = saved.statusFilter;
+		studySystemFilter = saved.studySystemFilter;
+		if (!isScopedAdmin) careerFilter = saved.careerFilter;
+		sortBy = saved.sortBy;
+		sortDirection = saved.sortDirection;
+
 		loadedFiltersKey = filtersKey;
 		loadUsers();
 		loadCareers();
@@ -986,6 +1003,22 @@
 		loadedFiltersKey = filtersKey;
 		scheduleFiltersLoad();
 	}
+
+	$: if (filtersReady) {
+		saveUserFilters(window.localStorage, { roleFilter, statusFilter, studySystemFilter, careerFilter, sortBy, sortDirection });
+	}
+
+	$: activeFiltersCount = countActiveUserFilters(
+		{ roleFilter, statusFilter, studySystemFilter, careerFilter },
+		{ careerLocked: isScopedAdmin }
+	);
+
+	function clearFilters() {
+		roleFilter = 'all';
+		statusFilter = 'all';
+		studySystemFilter = 'all';
+		if (!isScopedAdmin) careerFilter = 'all';
+	}
 </script>
 
 <div class="min-h-screen bg-light-blue-background">
@@ -1001,37 +1034,38 @@
 					</p>
 				</div>
 
-				<div class="flex flex-wrap justify-end gap-2">
+				<div
+					class={`grid w-full gap-2 sm:flex sm:w-auto sm:flex-wrap sm:justify-end ${canImportStudents ? 'grid-cols-3' : 'grid-cols-2'}`}
+				>
 					<Button
 						variant="outline"
-						class="h-11 rounded-2xl px-4 shadow-sm"
+						class="h-auto min-w-0 flex-col gap-1 rounded-2xl px-1 py-2 text-xs shadow-sm sm:h-11 sm:flex-row sm:gap-2 sm:px-4 sm:py-2 sm:text-sm"
 						onclick={openHoursImport}
 						disabled={!hasCareerAdminAccess || hoursImportPreviewLoading || hoursImportCommitLoading}
 					>
-						<Clock3 class="h-4 w-4" />
-						Cargar horas
+						<Clock3 class="h-4 w-4 shrink-0" />
+						<span class="truncate">Cargar horas</span>
 					</Button>
 					{#if canImportStudents}
-						<span title="Importar estudiantes desde un archivo CSV">
-							<Button
-								variant="outline"
-								class="h-11 rounded-2xl px-4 shadow-sm"
-								onclick={openStudentImport}
-								disabled={importPreviewLoading || importCommitLoading}
-							>
-								<Upload class="h-4 w-4" />
-								Importar estudiantes
-							</Button>
-						</span>
+						<Button
+							variant="outline"
+							class="h-auto min-w-0 flex-col gap-1 rounded-2xl px-1 py-2 text-xs shadow-sm sm:h-11 sm:flex-row sm:gap-2 sm:px-4 sm:py-2 sm:text-sm"
+							onclick={openStudentImport}
+							disabled={importPreviewLoading || importCommitLoading}
+							title="Importar estudiantes desde un archivo CSV"
+						>
+							<Upload class="h-4 w-4 shrink-0" />
+							<span class="truncate"><span class="sm:hidden">Importar</span><span class="hidden sm:inline">Importar estudiantes</span></span>
+						</Button>
 					{/if}
 					<Button
-						class="h-11 rounded-2xl bg-blue-600 px-4 text-white shadow-sm hover:bg-blue-700"
+						class="h-auto min-w-0 flex-col gap-1 rounded-2xl bg-blue-600 px-1 py-2 text-xs text-white shadow-sm hover:bg-blue-700 sm:h-11 sm:flex-row sm:gap-2 sm:px-4 sm:py-2 sm:text-sm"
 						onclick={openCreateUser}
 						disabled={!hasCareerAdminAccess}
 						aria-label="Crear usuario"
 					>
-						<Plus class="h-4 w-4" />
-						Nuevo usuario
+						<Plus class="h-4 w-4 shrink-0" />
+						<span class="truncate"><span class="sm:hidden">Nuevo</span><span class="hidden sm:inline">Nuevo usuario</span></span>
 					</Button>
 				</div>
 			</div>
@@ -1053,8 +1087,33 @@
 			{/if}
 
 			<div class="mt-4 space-y-3">
+				<div class="flex gap-2 sm:hidden">
+					<div class="relative min-w-0 flex-1">
+						<Search class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+						<Input
+							class="h-11 rounded-2xl bg-background pl-9 shadow-sm"
+							placeholder="Buscar usuario..."
+							bind:value={q}
+							autocomplete="off"
+							aria-label="Buscar usuario"
+						/>
+					</div>
+					<Button
+						variant="outline"
+						class="h-11 shrink-0 rounded-2xl px-3 shadow-sm"
+						onclick={() => (filtersDialogOpen = true)}
+						aria-label="Abrir filtros"
+					>
+						<SlidersHorizontal class="h-4 w-4" />
+						Filtros
+						{#if activeFiltersCount > 0}
+							<span class="ml-0.5 rounded-full bg-blue-600 px-1.5 text-xs font-semibold text-white">{activeFiltersCount}</span>
+						{/if}
+					</Button>
+				</div>
+
 				<div
-					class="grid grid-cols-1 gap-2 sm:grid-cols-2 sm:gap-3 lg:grid-cols-[minmax(12rem,1fr)_minmax(8rem,auto)_minmax(9rem,auto)_minmax(9rem,auto)_minmax(9rem,auto)_minmax(8.5rem,auto)]"
+					class="hidden gap-3 sm:grid sm:grid-cols-2 lg:grid-cols-[minmax(12rem,1fr)_minmax(8rem,auto)_minmax(9rem,auto)_minmax(9rem,auto)_minmax(9rem,auto)_minmax(8.5rem,auto)]"
 				>
 					<div class="relative sm:col-span-2 lg:col-span-1">
 						<Search class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
@@ -1065,78 +1124,109 @@
 							autocomplete="off"
 						/>
 					</div>
-
-					<div>
-						<Label for="admin-users-career-filter" class="sr-only">Filtrar por carrera</Label>
-						<select
-							id="admin-users-career-filter"
-							class="h-11 w-full rounded-2xl border bg-background px-3 text-sm"
-							bind:value={careerFilter}
-							disabled={!hasCareerAdminAccess || isScopedAdmin}
-						>
-							{#if isGlobalAdmin}
-								<option value="all">Todas las carreras</option>
-								<option value="none">Sin carrera</option>
-								{#each careers as career (career.id)}
-									<option value={String(career.id)}>{career.name}</option>
-								{/each}
-							{:else if isScopedAdmin}
-								<option value={String(currentCareerId)}>{scopedCareerName}</option>
-							{:else}
-								<option value="all">Carrera no disponible</option>
-							{/if}
-						</select>
-					</div>
-
-					<select class="h-11 w-full rounded-2xl border px-3 text-sm" bind:value={roleFilter}>
-						<option value="all">Todos los roles</option>
-						{#each roleOptions as role}
-							<option value={role}>{formatRole(role)}</option>
-						{/each}
-					</select>
-
-					<select class="h-11 w-full rounded-2xl border px-3 text-sm" bind:value={statusFilter}>
-						<option value="all">Todos los estatus</option>
-						{#each statusOptions as status}
-							<option value={status}>{formatStatus(status)}</option>
-						{/each}
-					</select>
-
-					<select
-						class="h-11 w-full rounded-2xl border px-3 text-sm"
-						aria-label="Filtrar por sistema"
-						bind:value={studySystemFilter}
-					>
-						<option value="all">Todos los sistemas</option>
-						<option value="esc">Escolarizado (ESC)</option>
-						<option value="sua">Abierta y a distancia (SUA)</option>
-					</select>
-
-					<div class="sm:col-span-2 lg:col-span-1">
-						<Label for="admin-users-page-size" class="sr-only">Registros por página</Label>
-						<select
-							id="admin-users-page-size"
-							class="h-11 w-full rounded-2xl border bg-background px-3 text-sm"
-							value={pageSize}
-							onchange={handlePageSizeChange}
-							aria-label="Registros por página"
-						>
-							{#each pageSizeOptions as option}
-								<option value={option}>{option} por página</option>
-							{/each}
-						</select>
-					</div>
+					{@render userFilterControls('admin-users', false)}
 				</div>
 			</div>
 		</div>
 	</div>
+
+	<Dialog.Root bind:open={filtersDialogOpen}>
+		<Dialog.Content class="max-h-[90dvh] overflow-y-auto sm:max-w-md">
+			<Dialog.Header>
+				<Dialog.Title>Filtros</Dialog.Title>
+				<Dialog.Description>Se guardan en este dispositivo para la próxima vez.</Dialog.Description>
+			</Dialog.Header>
+			<div class="grid gap-3 py-1">
+				{@render userFilterControls('admin-users-mobile', true)}
+			</div>
+			<Dialog.Footer class="flex-row gap-2">
+				<Button variant="outline" class="flex-1" onclick={clearFilters} disabled={activeFiltersCount === 0}>
+					Limpiar
+				</Button>
+				<Button class="flex-1 bg-blue-600 text-white hover:bg-blue-700" onclick={() => (filtersDialogOpen = false)}>
+					Ver resultados
+				</Button>
+			</Dialog.Footer>
+		</Dialog.Content>
+	</Dialog.Root>
+
+	{#snippet userFilterControls(idPrefix, showLabels)}
+		<div class="space-y-1">
+			<Label for={`${idPrefix}-career-filter`} class={showLabels ? 'text-sm' : 'sr-only'}>Carrera</Label>
+			<select
+				id={`${idPrefix}-career-filter`}
+				class="h-11 w-full rounded-2xl border bg-background px-3 text-sm"
+				bind:value={careerFilter}
+				disabled={!hasCareerAdminAccess || isScopedAdmin}
+			>
+				{#if isGlobalAdmin}
+					<option value="all">Todas las carreras</option>
+					<option value="none">Sin carrera</option>
+					{#each careers as career (career.id)}
+						<option value={String(career.id)}>{career.name}</option>
+					{/each}
+				{:else if isScopedAdmin}
+					<option value={String(currentCareerId)}>{scopedCareerName}</option>
+				{:else}
+					<option value="all">Carrera no disponible</option>
+				{/if}
+			</select>
+		</div>
+
+		<div class="space-y-1">
+			<Label for={`${idPrefix}-role-filter`} class={showLabels ? 'text-sm' : 'sr-only'}>Rol</Label>
+			<select id={`${idPrefix}-role-filter`} class="h-11 w-full rounded-2xl border bg-background px-3 text-sm" bind:value={roleFilter}>
+				<option value="all">Todos los roles</option>
+				{#each roleOptions as role}
+					<option value={role}>{formatRole(role)}</option>
+				{/each}
+			</select>
+		</div>
+
+		<div class="space-y-1">
+			<Label for={`${idPrefix}-status-filter`} class={showLabels ? 'text-sm' : 'sr-only'}>Estatus</Label>
+			<select id={`${idPrefix}-status-filter`} class="h-11 w-full rounded-2xl border bg-background px-3 text-sm" bind:value={statusFilter}>
+				<option value="all">Todos los estatus</option>
+				{#each statusOptions as status}
+					<option value={status}>{formatStatus(status)}</option>
+				{/each}
+			</select>
+		</div>
+
+		<div class="space-y-1">
+			<Label for={`${idPrefix}-system-filter`} class={showLabels ? 'text-sm' : 'sr-only'}>Sistema</Label>
+			<select
+				id={`${idPrefix}-system-filter`}
+				class="h-11 w-full rounded-2xl border bg-background px-3 text-sm"
+				bind:value={studySystemFilter}
+			>
+				<option value="all">Todos los sistemas</option>
+				<option value="esc">Escolarizado (ESC)</option>
+				<option value="sua">Abierta y a distancia (SUA)</option>
+			</select>
+		</div>
+
+		<div class="space-y-1 sm:col-span-2 lg:col-span-1">
+			<Label for={`${idPrefix}-page-size`} class={showLabels ? 'text-sm' : 'sr-only'}>Registros por página</Label>
+			<select
+				id={`${idPrefix}-page-size`}
+				class="h-11 w-full rounded-2xl border bg-background px-3 text-sm"
+				value={pageSize}
+				onchange={handlePageSizeChange}
+			>
+				{#each pageSizeOptions as option}
+					<option value={option}>{option} por página</option>
+				{/each}
+			</select>
+		</div>
+	{/snippet}
 
 	<!-- Content -->
 	<main class="mx-auto w-full max-w-[1600px] px-4 pb-10 pt-6 sm:px-6 lg:px-8">
 		<div class="space-y-6">
 			<!-- KPI de usuarios temporalmente ocultos -->
 
-			<div class="flex items-center justify-between">
+			<div class="flex flex-wrap items-center justify-between gap-2">
 				<p
 					class="text-sm font-semibold text-muted-foreground"
 					aria-live="polite"
@@ -1350,24 +1440,24 @@
 			<!-- Mobile cards -->
 			<div class="space-y-3 sm:hidden">
 				{#if loading}
-					<Card class={`rounded-3xl border bg-card text-card-foreground ${cardShadow}`}>
+					<Card class={`gap-0 rounded-3xl border bg-card py-0 text-card-foreground ${cardShadow}`}>
 						<CardContent class="py-12 text-center text-sm text-muted-foreground">
 							<Loader2 class="mx-auto h-4 w-4 animate-spin" />
 						</CardContent>
 					</Card>
 				{:else if users.length === 0}
-					<Card class={`rounded-3xl border bg-card text-card-foreground ${cardShadow}`}>
+					<Card class={`gap-0 rounded-3xl border bg-card py-0 text-card-foreground ${cardShadow}`}>
 						<CardContent class="py-12 text-center text-sm text-muted-foreground">
 							No se encontraron usuarios.
 						</CardContent>
 					</Card>
 				{:else}
 					{#each users as u (u.id)}
-						<Card class={`min-w-0 rounded-3xl border bg-card text-card-foreground ${cardShadow}`}>
-							<CardContent class="p-5 [overflow-wrap:anywhere]">
+						<Card class={`min-w-0 gap-0 rounded-3xl border bg-card py-0 text-card-foreground ${cardShadow}`}>
+							<CardContent class="p-4 [overflow-wrap:anywhere]">
 								<div class="flex items-start justify-between gap-3">
 									<div class="flex min-w-0 flex-1 items-center gap-3">
-										<Avatar class="h-12 w-12 shrink-0">
+										<Avatar class="h-11 w-11 shrink-0">
 											<AvatarImage src="" alt={fullName(u)} />
 											<AvatarFallback>{initials(fullName(u))}</AvatarFallback>
 										</Avatar>
@@ -1399,9 +1489,9 @@
 									<Badge class={`shrink-0 ${badgeClass(u.role)}`}>{formatRole(u.role || 'visitor')}</Badge>
 								</div>
 
-								<Separator class="my-4" />
+								<Separator class="my-2" />
 
-								<div class="flex items-center justify-end">
+								<div class="-mb-1 flex items-center justify-end">
 									<Tooltip.Provider delayDuration={150}>
 										{#if canViewAs(u)}
 											<Tooltip.Root>
@@ -1588,6 +1678,50 @@
 					Validar archivo
 				</Button>
 			{/if}
+		</Dialog.Footer>
+	</Dialog.Content>
+</Dialog.Root>
+
+<Dialog.Root bind:open={hoursImportResultOpen}>
+	<Dialog.Content class="max-h-[90dvh] overflow-y-auto sm:max-w-md" data-testid="hours-import-success">
+		<div class="flex flex-col items-center gap-3 pt-2 text-center">
+			<div class="flex h-16 w-16 items-center justify-center rounded-full bg-emerald-100">
+				<CheckCircle2 class="h-9 w-9 text-emerald-600" />
+			</div>
+			<Dialog.Header class="items-center">
+				<Dialog.Title class="text-xl">Horas cargadas correctamente</Dialog.Title>
+				<Dialog.Description>Los ajustes ya se reflejan en el avance de cada alumno.</Dialog.Description>
+			</Dialog.Header>
+		</div>
+
+		{#if hoursImportResult}
+			<div class="grid grid-cols-2 gap-2 text-center">
+				<div class="rounded-2xl border bg-slate-50 p-3">
+					<div class="text-2xl font-semibold">{hoursImportResult.users}</div>
+					<div class="text-xs text-muted-foreground">Alumnos</div>
+				</div>
+				<div class="rounded-2xl border border-emerald-200 bg-emerald-50 p-3">
+					<div class="text-2xl font-semibold text-emerald-700">
+						{hoursImportResult.totalHours.toLocaleString('es-MX', { maximumFractionDigits: 2 })}
+					</div>
+					<div class="text-xs text-emerald-700">Horas agregadas</div>
+				</div>
+			</div>
+			{#if hoursImportResult.cappedRows > 0}
+				<p class="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
+					{hoursImportResult.cappedRows} alumno(s) alcanzaron la meta AFC de su carrera y recibieron menos horas de las indicadas en el CSV.
+				</p>
+			{/if}
+		{/if}
+
+		<Dialog.Footer class="gap-2">
+			<Button variant="outline" onclick={downloadHoursReport} disabled={!hoursImportResult?.report?.length}>
+				<Download class="h-4 w-4" />
+				Descargar reporte
+			</Button>
+			<Button class="bg-emerald-600 text-white hover:bg-emerald-700" onclick={() => (hoursImportResultOpen = false)}>
+				Listo
+			</Button>
 		</Dialog.Footer>
 	</Dialog.Content>
 </Dialog.Root>

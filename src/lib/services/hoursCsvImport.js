@@ -1,3 +1,5 @@
+import { buildCsv, mexicoDateKey } from '../utils/csv.js';
+
 export const HOURS_CSV_MAX_BYTES = 2 * 1024 * 1024;
 export const HOURS_CSV_MAX_ROWS = 1000;
 export const HOURS_CSV_TEMPLATE_FILENAME = 'plantilla-carga-horas-afc.csv';
@@ -27,4 +29,15 @@ export function normalizeHoursCsvErrors(error) {
 		field: String(item?.field || 'archivo'),
 		message: String(item?.message || 'Dato inválido.')
 	}));
+}
+
+export function buildHoursReportCsv(report) {
+	return buildCsv(
+		['numero_cuenta', 'correo', 'horas_agregadas'],
+		(Array.isArray(report) ? report : []).map((item) => [item?.numero_cuenta, item?.correo, item?.horas_agregadas])
+	);
+}
+
+export function hoursReportFilename(date = new Date()) {
+	return `hrs-agregadas-${mexicoDateKey(date)}.csv`;
 }

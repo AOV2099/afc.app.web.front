@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process';
-import { expect, request, test } from '@playwright/test';
+import { expect, test } from '@playwright/test';
+import { apiLogin } from './helpers/session.js';
 
 /*
  * Inscripción libre: abierta hasta que el evento termina; con revisión manual cierra al iniciar.
@@ -16,13 +17,6 @@ const MINUTE = 60_000;
 const createdIds = [];
 let admin;
 let visitor;
-
-async function apiLogin(email, password) {
-	const ctx = await request.newContext({ baseURL: env.AFC_E2E_BASE_URL, ignoreHTTPSErrors: true });
-	const res = await ctx.post('/api/login', { data: { email, password } });
-	expect(res.ok(), `login ${email}`).toBeTruthy();
-	return ctx;
-}
 
 function sql(statement) {
 	return execFileSync('docker', ['exec', DB_CONTAINER, 'psql', '-U', 'afc', '-d', 'afc', '-tAc', statement], {

@@ -4,6 +4,8 @@ import test from 'node:test';
 import {
 	HOURS_CSV_MAX_BYTES,
 	HOURS_CSV_TEMPLATE,
+	buildHoursReportCsv,
+	hoursReportFilename,
 	normalizeHoursCsvErrors,
 	validateHoursCsvFile,
 	validateHoursCsvText
@@ -28,4 +30,25 @@ test('hours CSV backend errors preserve row context', () => {
 		[{ row: 3, field: 'horas', message: 'Inválido' }]
 	);
 	assert.equal(normalizeHoursCsvErrors(new Error('Falló'))[0].message, 'Falló');
+});
+
+test('hours report CSV lists account, email and added hours, safe for Excel', () => {
+	const csv = buildHoursReportCsv([
+		{ numero_cuenta: '320226160', correo: 'ana@aragon.unam.mx', horas_agregadas: 100 },
+		{ numero_cuenta: '420124929', correo: '=HYPERLINK("x")', horas_agregadas: 0 },
+		{ numero_cuenta: '31666024', correo: null, horas_agregadas: 2.5 }
+	]);
+	assert.equal(
+		csv,
+		'\uFEFFnumero_cuenta,correo,horas_agregadas\n' +
+			'320226160,ana@aragon.unam.mx,100\n' +
+			'420124929,"\'=HYPERLINK(""x"")",0\n' +
+			'31666024,,2.5\n'
+	);
+	assert.equal(buildHoursReportCsv(null), '\uFEFFnumero_cuenta,correo,horas_agregadas\n');
+});
+
+test('hours report file name uses the Mexico City date', () => {
+	assert.equal(hoursReportFilename(new Date('2026-11-06T18:00:00.000Z')), 'hrs-agregadas-2026-11-06.csv');
+	assert.equal(hoursReportFilename(new Date('2026-11-07T05:30:00.000Z')), 'hrs-agregadas-2026-11-06.csv');
 });
