@@ -3,6 +3,7 @@
   import { goto } from "$app/navigation";
   import { toast } from "svelte-sonner";
   import { adminEventsApi, adminStaffUsersApi } from "$lib/services/api";
+  import { normalizeWebImageUrl as normalizeImageUrl } from "$lib/utils/imageUrl.js";
   import {
     EVENT_CANCEL_POLICY_CATALOG,
     EVENT_CANCEL_POLICY_HELP,
@@ -444,26 +445,8 @@
     return d.toISOString();
   }
 
-  function normalizeWebImageUrl(value) {
-    const raw = String(value || "").trim();
-    if (!raw) return "";
-
-    let candidate = raw;
-    if (raw.startsWith("//")) {
-      candidate = `https:${raw}`;
-    } else if (!/^https?:\/\//i.test(raw)) {
-      if (/^www\./i.test(raw) || /^[a-z0-9.-]+\.[a-z]{2,}(?:\/|$)/i.test(raw)) {
-        candidate = `https://${raw}`;
-      }
-    }
-
-    try {
-      const parsed = new URL(candidate);
-      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return "";
-      return parsed.toString();
-    } catch {
-      return "";
-    }
+    function normalizeWebImageUrl(value) {
+      return normalizeImageUrl(value);
   }
 
   function isValidHttpUrl(value) {

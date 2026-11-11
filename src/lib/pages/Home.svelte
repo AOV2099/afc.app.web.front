@@ -99,7 +99,7 @@
 	function isActiveRegistrationStatus(status) {
 		const normalized = normalizeStatus(status);
 		if (!normalized) return false;
-    if (normalized === 'approved' || normalized === 'pending' || normalized === 'cancel_pending') return true;
+	if (normalized === 'approved' || normalized === 'pending' || normalized === 'changes_requested' || normalized === 'cancel_pending') return true;
 		if (normalized.includes('reject')) return false;
 		if (normalized.includes('cancel')) return false;
 		if (normalized.includes('withdraw')) return false;
@@ -123,7 +123,7 @@
 		if (registrationStatus === 'approved' && entry?.ticket) {
 			return { label: null, disabled: true, action: 'none', availabilityLabel: attendanceLabel };
 		}
-		if (registrationStatus === 'pending') {
+		if (registrationStatus === 'pending' || registrationStatus === 'changes_requested') {
 			return { label: 'Inscripción pendiente', disabled: true, action: 'none' };
 		}
 		if (registrationStatus === 'cancel_pending') {
@@ -181,7 +181,7 @@
 						startsMs,
 						sortMs: startsMs ?? (new Date(entry?.event?.starts_at).getTime() || 0),
 						enrollmentLabel:
-							registrationStatus === 'pending'
+							registrationStatus === 'pending' || registrationStatus === 'changes_requested'
 								? 'Solicitud pendiente'
 								: registrationStatus === 'cancel_pending'
 									? 'Baja en revisión'

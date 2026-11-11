@@ -103,7 +103,7 @@ test.afterAll(async () => {
 	await Promise.all([admin, visitor].filter(Boolean).map((ctx) => ctx.dispose()));
 });
 
-test('inscripción libre: se aprueba con ticket, baja libre y reinscripción', async () => {
+test('inscripción libre: se aprueba con ticket, baja libre y reinscripción', async ({ browser }) => {
 	const eventId = await createEvent('libre');
 
 	const first = await post(visitor, `/api/events/${eventId}/register`);
@@ -130,9 +130,21 @@ test('inscripción libre: se aprueba con ticket, baja libre y reinscripción', a
 	expect(again.status, again.body.message).toBe(200);
 	expect(again.body.reactivated).toBe(true);
 	expect(again.body.registration.status).toBe('approved');
+
+	const context = await browser.newContext({ ignoreHTTPSErrors: true, storageState: await visitor.storageState() });
+	const page = await context.newPage();
+	await page.goto('/app/explore');
+	const search = page.getByPlaceholder('Buscar por nombre o categoría...');
+	await search.fill(`QA-Enroll-${RUN_ID} libre`);
+	await search.press('Enter');
+	const card = page.getByTestId('event-card').filter({ hasText: `QA-Enroll-${RUN_ID} libre` });
+	await expect(card.getByRole('button', { name: 'Ver ticket' })).toBeVisible();
+	await card.getByRole('button', { name: 'Ver ticket' }).click();
+	await expect(page.getByTestId('ticket-dialog').getByText(`QA-Enroll-${RUN_ID} libre`)).toBeVisible();
+	await context.close();
 });
 
-test('revisión manual: queda pendiente, se rechaza, se vuelve a solicitar y se aprueba', async () => {
+test('revisión manual: se informa el estado pendiente en las tarjetas y después se aprueba', async ({ browser }) => {
 	const eventId = await createEvent('revisión manual', { mode: 'manual_review', resubmission: 'allowed' });
 
 	const requestRes = await post(visitor, `/api/events/${eventId}/register`);
@@ -144,6 +156,22 @@ test('revisión manual: queda pendiente, se rechaza, se vuelve a solicitar y se 
 	const pending = await (await admin.get(`/api/admin/requests/pending?event_id=${eventId}`)).json();
 	expect(pending.requests.map((item) => Number(item.id ?? item.registration_id))).toContain(Number(registrationId));
 	expect((await stats(eventId)).dashboard.pending_count).toBe(1);
+
+	const context = await browser.newContext({ ignoreHTTPSErrors: true, storageState: await visitor.storageState() });
+	const page = await context.newPage();
+	const eventTitle = `QA-Enroll-${RUN_ID} revisión manual`;
+	await page.goto('/app/explore');
+	const search = page.getByPlaceholder('Buscar por nombre o categoría...');
+	await search.fill(eventTitle);
+	await search.press('Enter');
+	const exploreCard = page.getByTestId('event-card').filter({ hasText: eventTitle });
+	await expect(exploreCard).toContainText('Solicitud pendiente');
+	await expect(exploreCard.getByRole('button', { name: 'Ver ticket' })).toHaveCount(0);
+
+	await page.goto('/app/home');
+	const homeCard = page.getByTestId('my-events').getByTestId('event-card').filter({ hasText: eventTitle });
+	await expect(homeCard).toContainText('Solicitud pendiente');
+	await context.close();
 
 	await review(registrationId, 'deny');
 	const retry = await post(visitor, `/api/events/${eventId}/register`);

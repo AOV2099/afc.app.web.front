@@ -1,20 +1,20 @@
 import { getEventCategoryMeta } from '../catalogs/eventCategories.js';
 import { getEventCategoryIcon } from '../catalogs/eventCategoryIcons.js';
+import { normalizeWebImageUrl } from './imageUrl.js';
 
 export const EVENT_IMAGE_FALLBACK =
 	'https://gaceta.cch.unam.mx/sites/default/files/styles/imagen_articulos_1920x1080/public/2020-07/video_mensaje_1.jpg?h=d1cb525d&itok=4PYz5F61';
 
 export function resolveEventImage(event) {
-	return (
+	const imageUrl =
 		event?.coverImageUrl ||
 		event?.cover_image_url ||
 		event?.image ||
 		event?.image_url ||
 		event?.cover_url ||
 		event?.attributes?.cover_image_url ||
-		event?.attributes?.image_url ||
-		EVENT_IMAGE_FALLBACK
-	);
+		event?.attributes?.image_url;
+	return normalizeWebImageUrl(imageUrl) || EVENT_IMAGE_FALLBACK;
 }
 
 function validDate(value) {

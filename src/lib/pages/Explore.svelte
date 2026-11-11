@@ -4,6 +4,8 @@
   import { Button } from "$lib/components/ui/button";
   import { Input } from "$lib/components/ui/input";
   import UnsubscribeDialog from '$lib/components/UnsubscribeDialog.svelte';
+  import EnrolledEventFooter from '$lib/components/EnrolledEventFooter.svelte';
+  import TicketDialog from '$lib/components/TicketDialog.svelte';
   import { adminEventsApi, publicEventsApi, myRegistrationsApi } from '$lib/services/api';
   import {
     DEFAULT_EVENT_STATUS_FILTER,
@@ -48,6 +50,8 @@
   let registrationsByEventId = {};
   let unsubscribeDialogOpen = false;
   let unsubscribeTargetEvent = null;
+  let ticketDialogOpen = false;
+  let ticketEventId = null;
 
   function mapAdminEventToUi(event) {
     return mapEventToCard(event);
@@ -69,6 +73,17 @@
 
   function getRegistrationForEvent(eventId) {
     return registrationsByEventId?.[eventId] || null;
+  }
+
+  function canViewTicketOnCard(eventId) {
+    const registration = getRegistrationForEvent(eventId);
+    return String(registration?.registration?.status || '').toLowerCase() === 'approved' && Boolean(registration?.ticket);
+  }
+
+  function openTicketDialog(eventId) {
+    if (!eventId || !canViewTicketOnCard(eventId)) return;
+    ticketEventId = eventId;
+    ticketDialogOpen = true;
   }
 
   const ENROLLMENT_BADGES = {
@@ -139,7 +154,7 @@
         };
       }
 
-      if (registrationStatus === 'pending' || registrationEntry?.pending_approval) {
+      if (registrationStatus === 'pending' || registrationStatus === 'changes_requested' || registrationEntry?.pending_approval) {
         return {
           label: 'Pendiente',
           disabled: true,
@@ -610,7 +625,15 @@
           badges={enrollmentBadges(registrationsByEventId, e.id)}
           availabilityLabel={getAvailabilityLabel(e)}
           onClick={() => openEventDetail(e)}
-        />
+        >
+          <svelte:fragment slot="footer">
+            <EnrolledEventFooter
+              attendance={getRegistrationForEvent(e.id) ? attendancePreview(getRegistrationForEvent(e.id)).attendance : null}
+              canViewTicket={canViewTicketOnCard(e.id)}
+              onViewTicket={() => openTicketDialog(e.id)}
+            />
+          </svelte:fragment>
+        </EventCard>
       {/each}
     </div>
   {/if}
@@ -642,4 +665,6 @@
 />
 
 <UnsubscribeDialog bind:open={unsubscribeDialogOpen} event={unsubscribeTargetEvent} onDone={afterUnsubscribe} />
+
+<TicketDialog bind:open={ticketDialogOpen} eventId={ticketEventId} />
 
