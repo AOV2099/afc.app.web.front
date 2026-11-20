@@ -14,6 +14,12 @@ export function panelIn(node, params = {}) {
 	return fly(node, { ...PANEL_IN, ...params });
 }
 
+/** Desplazamiento horizontal entre pantallas (como el cambio de vista en una app móvil). */
+export function screenSlide(node, { x = 0, duration = 320 } = {}) {
+	if (prefersReducedMotion()) return { duration: 0 };
+	return fly(node, { x, duration, easing: cubicOut, opacity: 0 });
+}
+
 /** Retraso escalonado para listas: cada elemento entra un poco después del anterior, con tope. */
 export function staggerDelay(index, step = 40, max = 320) {
 	return Math.min(Math.max(0, Number(index) || 0) * step, max);

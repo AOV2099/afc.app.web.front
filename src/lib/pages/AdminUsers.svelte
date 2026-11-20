@@ -30,6 +30,7 @@
 		getAssignableAdminUserRoles,
 		getAdminCareerScope,
 		isManualHoursEligibleUser,
+		isConstanciaEligibleUser,
 		normalizeAdminStudentId,
 		positiveCareerId
 	} from '$lib/services/adminUserCareerScope';
@@ -61,7 +62,8 @@
 		ArrowUp,
 		ArrowDown,
 		Clock3,
-		SlidersHorizontal
+		SlidersHorizontal,
+		FileText
 	} from 'lucide-svelte';
 
 	import {
@@ -221,6 +223,48 @@
 			toast.error(e?.message || 'No se pudo abrir la vista del usuario.');
 			viewAsLoadingId = null;
 		}
+	}
+
+	let constanciaLoadingId = null;
+	let constanciaPreviewOpen = false;
+	let constanciaPreview = null;
+
+	function canViewConstancia(user) {
+		return isGlobalAdmin && isConstanciaEligibleUser(user);
+	}
+
+	async function openConstancia(user) {
+		if (constanciaLoadingId) return;
+		constanciaLoadingId = user.id;
+		try {
+			const blob = await adminUsersApi.downloadConstancia(user.id);
+			if (constanciaPreview) URL.revokeObjectURL(constanciaPreview.url);
+			constanciaPreview = {
+				url: URL.createObjectURL(blob),
+				filename: `constancia-afc-${String(user.student_id).trim()}.pdf`,
+				name: fullName(user)
+			};
+			constanciaPreviewOpen = true;
+		} catch (e) {
+			toast.error(e?.message || 'No se pudo generar la constancia.');
+		} finally {
+			constanciaLoadingId = null;
+		}
+	}
+
+	function downloadConstanciaPreview() {
+		if (!constanciaPreview) return;
+		const link = document.createElement('a');
+		link.href = constanciaPreview.url;
+		link.download = constanciaPreview.filename;
+		document.body.appendChild(link);
+		link.click();
+		link.remove();
+	}
+
+	$: if (!constanciaPreviewOpen && constanciaPreview) {
+		URL.revokeObjectURL(constanciaPreview.url);
+		constanciaPreview = null;
 	}
 
 	function careerNameById(careerId, availableCareers = careers, user = currentUser) {
@@ -1384,6 +1428,23 @@
 															<Tooltip.Content>Ver como este usuario (solo lectura)</Tooltip.Content>
 														</Tooltip.Root>
 													{/if}
+													{#if canViewConstancia(u)}
+														<Tooltip.Root>
+															<Tooltip.Trigger
+																class="inline-grid h-9 w-9 place-items-center rounded-full hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+																disabled={Boolean(constanciaLoadingId)}
+																onclick={() => openConstancia(u)}
+																aria-label="Visualizar constancia"
+															>
+																{#if constanciaLoadingId === u.id}
+																	<Loader2 class="h-4 w-4 animate-spin text-indigo-600" />
+																{:else}
+																	<FileText class="h-4 w-4 text-indigo-600" />
+																{/if}
+															</Tooltip.Trigger>
+															<Tooltip.Content>Visualizar constancia de horas AFC</Tooltip.Content>
+														</Tooltip.Root>
+													{/if}
 													{#if canManageRow(u) && isManualHoursEligibleUser(u)}
 														<Tooltip.Root>
 															<Tooltip.Trigger
@@ -1504,6 +1565,23 @@
 													<Eye class="h-4 w-4 text-violet-600" />
 												</Tooltip.Trigger>
 												<Tooltip.Content>Ver como este usuario (solo lectura)</Tooltip.Content>
+											</Tooltip.Root>
+										{/if}
+										{#if canViewConstancia(u)}
+											<Tooltip.Root>
+												<Tooltip.Trigger
+													class="inline-grid h-9 w-9 place-items-center rounded-full hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+													disabled={Boolean(constanciaLoadingId)}
+													onclick={() => openConstancia(u)}
+													aria-label="Visualizar constancia"
+												>
+													{#if constanciaLoadingId === u.id}
+														<Loader2 class="h-4 w-4 animate-spin text-indigo-600" />
+													{:else}
+														<FileText class="h-4 w-4 text-indigo-600" />
+													{/if}
+												</Tooltip.Trigger>
+												<Tooltip.Content>Visualizar constancia de horas AFC</Tooltip.Content>
 											</Tooltip.Root>
 										{/if}
 										{#if canManageRow(u) && isManualHoursEligibleUser(u)}
@@ -1678,6 +1756,29 @@
 					Validar archivo
 				</Button>
 			{/if}
+		</Dialog.Footer>
+	</Dialog.Content>
+</Dialog.Root>
+
+<Dialog.Root bind:open={constanciaPreviewOpen}>
+	<Dialog.Content class="flex h-[90dvh] max-h-[90dvh] flex-col gap-3 sm:max-w-3xl" data-testid="constancia-preview">
+		<Dialog.Header>
+			<Dialog.Title>Constancia de horas AFC</Dialog.Title>
+			<Dialog.Description>{constanciaPreview?.name || ''}</Dialog.Description>
+		</Dialog.Header>
+		{#if constanciaPreview}
+			<iframe
+				title="Vista previa de la constancia"
+				src={`${constanciaPreview.url}#toolbar=0&view=FitH`}
+				class="min-h-0 w-full flex-1 rounded-xl border bg-slate-100"
+			></iframe>
+		{/if}
+		<Dialog.Footer class="gap-2">
+			<Button variant="outline" onclick={() => (constanciaPreviewOpen = false)}>Cerrar</Button>
+			<Button onclick={downloadConstanciaPreview} disabled={!constanciaPreview}>
+				<Download class="h-4 w-4" />
+				Descargar PDF
+			</Button>
 		</Dialog.Footer>
 	</Dialog.Content>
 </Dialog.Root>

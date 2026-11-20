@@ -21,6 +21,7 @@
 		"test:e2e:hours-report": "playwright test tests/e2e/hours-csv-report.spec.js",
 		"test:e2e:event-report": "playwright test tests/e2e/event-report.spec.js",
 		"test:e2e:users-filters": "playwright test tests/e2e/admin-users-filters.spec.js",
+		"test:e2e:constancia": "playwright test tests/e2e/constancia.spec.js tests/e2e/constancia-scanner.spec.js",
 		"test:e2e:contract": "playwright test --grep @contract",
 		"test:e2e:ui": "playwright test --ui",
 		"test:e2e:headed": "playwright test --headed",

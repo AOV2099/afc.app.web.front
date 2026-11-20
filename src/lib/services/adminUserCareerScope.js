@@ -34,6 +34,11 @@ export function isManualHoursEligibleUser(user) {
 	return /^\d{8,10}$/u.test(String(user?.student_id || '').trim());
 }
 
+export function isConstanciaEligibleUser(user) {
+	const goal = Number(user?.hours_goal);
+	return isManualHoursEligibleUser(user) && goal > 0 && Number(user?.hours_total) >= goal;
+}
+
 export function buildManualHoursAdjustmentPayload({ hours, category, motive, requestId }) {
 	return {
 		hours: String(hours ?? '').trim(),

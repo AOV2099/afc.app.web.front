@@ -8,6 +8,7 @@ import {
 	getAdminCareerScope,
 	getAssignableAdminUserRoles,
 	isManualHoursEligibleUser,
+	isConstanciaEligibleUser,
 	positiveCareerId
 } from '../src/lib/services/adminUserCareerScope.js';
 
@@ -125,6 +126,16 @@ test('manual hours are available to non-staff users with an 8-to-10 digit accoun
 	assert.equal(isManualHoursEligibleUser({ role: 'student', student_id: '1234567890' }), true);
 	assert.equal(isManualHoursEligibleUser({ role: 'visitor', student_id: null }), false);
 	assert.equal(isManualHoursEligibleUser({ role: 'visitor', student_id: '123' }), false);
+});
+
+test('constancia is only available once the student reaches the career hours goal', () => {
+	const student = { role: 'student', student_id: '420124929' };
+	assert.equal(isConstanciaEligibleUser({ ...student, hours_total: '480.00', hours_goal: '480.00' }), true);
+	assert.equal(isConstanciaEligibleUser({ ...student, hours_total: '524.00', hours_goal: '480.00' }), true);
+	assert.equal(isConstanciaEligibleUser({ ...student, hours_total: '479.50', hours_goal: '480.00' }), false);
+	assert.equal(isConstanciaEligibleUser({ ...student, hours_total: '10.00', hours_goal: '0.00' }), false);
+	assert.equal(isConstanciaEligibleUser({ ...student, hours_total: '500.00' }), false);
+	assert.equal(isConstanciaEligibleUser({ role: 'staff', student_id: '420124929', hours_total: '480', hours_goal: '480' }), false);
 });
 
 test('manual hours payload trims auditable fields without converting decimal text', () => {

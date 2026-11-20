@@ -167,6 +167,27 @@ export const adminUsersApi = {
 		return apiFetch(`/api/admin/users/import/${encodeURIComponent(importId)}/commit`, {
 			method: 'POST'
 		});
+	},
+	async downloadConstancia(userId) {
+		const response = await fetch(
+			`${API_BASE_URL}/api/admin/users/${encodeURIComponent(userId)}/constancia`,
+			{ credentials: 'include' }
+		);
+		if (!response.ok) {
+			const data = await response.json().catch(() => null);
+			const message = data?.message || `La solicitud falló (${response.status}).`;
+			redirectToLoginIfUnauthorized(response.status, message);
+			const error = new Error(message);
+			error.status = response.status;
+			throw error;
+		}
+		return response.blob();
+	}
+};
+
+export const adminConstanciasApi = {
+	verify(code) {
+		return apiFetch(`/api/admin/constancias/${encodeURIComponent(code)}`, { method: 'GET' });
 	}
 };
 

@@ -18,7 +18,8 @@
 		LogOut,
 		Menu,
 		ListChecks,
-		GraduationCap
+		GraduationCap,
+		ScanQrCode
 	} from 'lucide-svelte';
 
 	export let user = null;
@@ -31,6 +32,7 @@
 		{ key: 'alerts', label: 'Alertas', path: '/admin/alerts', icon: Bell },
 		{ key: 'Crear Evento', label: 'Crear Evento', path: '/admin/create-event', icon: CalendarPlus2 },
 		{ key: 'Usuarios', label: 'Usuarios', path: '/admin/users', icon: User },
+		{ key: 'constancias', label: 'Verificar constancia', path: '/admin/constancias', icon: ScanQrCode },
 		{ key: 'afc-catalog', label: 'Catálogo AFC', path: '/admin/afc-catalog', icon: ListChecks },
 		{ key: 'careers', label: 'Carreras', path: '/admin/careers', icon: GraduationCap, globalOnly: true },
 		{ key: 'settings', label: 'Configuración', path: '/admin/settings', icon: Settings }
