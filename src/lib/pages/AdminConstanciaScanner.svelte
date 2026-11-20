@@ -30,6 +30,8 @@
 	let manualCode = '';
 	let lastWarningAt = 0;
 	let resumeAt = 0;
+	let rejectedCode = '';
+	let rejectedUntil = 0;
 
 	// La vista de detalle vive en el historial (shallow routing): «atrás» del navegador o del celular regresa a la cámara.
 	$: showDetail = Boolean(result) && $page.state?.constanciaCode === result?.constancia?.code;
@@ -83,6 +85,8 @@
 		if (verifying || showDetail) return;
 		const code = extractConstanciaCode(text);
 		if (code && code === result?.constancia?.code && Date.now() < resumeAt) return;
+		// Un folio rechazado se queda frente a la cámara: no se vuelve a consultar en cada cuadro.
+		if (code && code === rejectedCode && Date.now() < rejectedUntil) return;
 		if (code) return verify(code);
 		const now = Date.now();
 		if (now - lastWarningAt > 2500) {
@@ -100,6 +104,8 @@
 			navigator.vibrate?.(60);
 			pushState('', { constanciaCode: result.constancia.code });
 		} catch (e) {
+			rejectedCode = code;
+			rejectedUntil = Date.now() + SAME_CODE_PAUSE_MS;
 			toast.error(e?.message || 'No se pudo verificar la constancia.');
 		} finally {
 			verifying = false;

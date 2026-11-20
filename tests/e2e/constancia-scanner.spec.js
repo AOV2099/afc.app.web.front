@@ -60,10 +60,11 @@ test.afterAll(async () => {
 	await admin?.dispose();
 });
 
-test('al escanear el QR pasa a la ficha del alumno y se regresa a la cámara', async ({}, testInfo) => {
+/** Abre la página con una cámara simulada que apunta a un QR con el texto indicado. */
+async function openWithCamera(testInfo, qrText) {
 	const video = testInfo.outputPath('constancia-qr.y4m');
 	fs.mkdirSync(testInfo.outputDir, { recursive: true });
-	writeQrVideo(video, folio);
+	writeQrVideo(video, qrText);
 
 	const browser = await chromium.launch({
 		args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-video-capture=${video}`]
@@ -76,6 +77,11 @@ test('al escanear el QR pasa a la ficha del alumno y se regresa a la cámara', a
 		storageState: await admin.storageState()
 	});
 	const page = await context.newPage();
+	return { browser, page };
+}
+
+test('al escanear el QR pasa a la ficha del alumno y se regresa a la cámara', async ({}, testInfo) => {
+	const { browser, page } = await openWithCamera(testInfo, folio);
 	await page.goto('/admin/constancias');
 
 	const detail = page.getByTestId('constancia-detail');
@@ -95,6 +101,33 @@ test('al escanear el QR pasa a la ficha del alumno y se regresa a la cámara', a
 	await page.goBack();
 	await expect(page.getByTestId('constancia-scanner')).toBeVisible();
 	await expect(page).toHaveURL(/\/admin\/constancias$/);
+	await browser.close();
+});
+
+test('un QR que no es constancia muestra aviso y la cámara sigue activa', async ({}, testInfo) => {
+	const { browser, page } = await openWithCamera(testInfo, 'TCK-PRUEBA-123');
+	const requests = [];
+	page.on('request', (req) => req.url().includes('/api/admin/constancias/') && requests.push(req.url()));
+	await page.goto('/admin/constancias');
+
+	await expect(page.getByText('Este QR no corresponde a una constancia AFC.')).toBeVisible({ timeout: 20_000 });
+	await expect(page.getByTestId('constancia-scanner')).toBeVisible();
+	await expect(page.getByTestId('constancia-detail')).toHaveCount(0);
+	expect(requests).toHaveLength(0);
+	await browser.close();
+});
+
+test('un folio inexistente frente a la cámara muestra error sin consultar en cada cuadro', async ({}, testInfo) => {
+	const { browser, page } = await openWithCamera(testInfo, 'AFC-0000-0000-0000');
+	const requests = [];
+	page.on('request', (req) => req.url().includes('/api/admin/constancias/') && requests.push(req.url()));
+	await page.goto('/admin/constancias');
+
+	await expect(page.getByText('No existe una constancia con este folio.').first()).toBeVisible({ timeout: 20_000 });
+	await page.waitForTimeout(2_000);
+	await expect(page.getByTestId('constancia-scanner')).toBeVisible();
+	await expect(page.getByTestId('constancia-detail')).toHaveCount(0);
+	expect(requests.length).toBeLessThanOrEqual(2);
 	await browser.close();
 });
 
