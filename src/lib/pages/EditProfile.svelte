@@ -14,6 +14,7 @@
 	let loadError = '';
 	let role = '';
 	let email = '';
+	let careerName = '';
 	let careers = [];
 
 	let form = {
@@ -28,6 +29,10 @@
 	}
 
 	$: isStudent = normalizeRole(role) === 'student';
+	// Los datos de los alumnos solo se muestran; el back también rechaza sus cambios.
+	$: readOnly = isStudent;
+	$: careerLabel =
+		careerName || careers.find((career) => String(career.id) === String(form.career))?.name || 'Sin carrera';
 
 	async function loadProfile() {
 		loading = true;
@@ -45,6 +50,9 @@
 			role = resolvedRole;
 			userIsStudent = normalizeRole(resolvedRole) === 'student';
 			email = user?.email || '';
+			careerName = String(
+				(typeof user?.career === 'object' ? user?.career?.name : '') || user?.career_name || user?.careerName || ''
+			).trim();
 			form = {
 				firstName: user?.firstName || user?.first_name || '',
 				lastName: user?.lastName || user?.last_name || '',
@@ -86,7 +94,7 @@
 	}
 
 	async function saveProfile() {
-		if (saving) return;
+		if (saving || readOnly) return;
 
 		if (!String(form.firstName || '').trim()) {
 			toast.error('El nombre es obligatorio.');
@@ -139,7 +147,7 @@
 
 <div class="mx-auto w-full max-w-screen-md px-4 pb-20 pt-6 sm:px-6 lg:px-8">
 	<div class="mb-4 flex items-center justify-between">
-		<h1 class="text-2xl font-semibold tracking-tight">Editar perfil</h1>
+		<h1 class="text-2xl font-semibold tracking-tight">{readOnly ? 'Mi perfil' : 'Editar perfil'}</h1>
 		<Button variant="secondary" class="rounded-xl" onclick={() => goto('/app/account')}>Volver</Button>
 	</div>
 
@@ -159,34 +167,35 @@
 
 				<div class="space-y-2">
 					<Label>Nombre</Label>
-					<Input bind:value={form.firstName} placeholder="Tu nombre" />
+					<Input bind:value={form.firstName} placeholder="Tu nombre" disabled={readOnly} />
 				</div>
 
 				<div class="space-y-2">
 					<Label>Apellidos</Label>
-					<Input bind:value={form.lastName} placeholder="Tus apellidos" />
+					<Input bind:value={form.lastName} placeholder="Tus apellidos" disabled={readOnly} />
 				</div>
 
 				{#if isStudent}
 					<div class="space-y-2">
 						<Label>Matrícula</Label>
-						<Input bind:value={form.studentId} placeholder="Tu matrícula" required />
+						<Input value={form.studentId} disabled />
 					</div>
 
 					<div class="space-y-2">
 						<Label>Carrera</Label>
-						<select class="h-10 w-full rounded-md border px-3" bind:value={form.career} required>
-							<option value="">Selecciona una carrera</option>
-							{#each careers as career (career.id)}
-								<option value={career.id}>{career.name} — {career.faculty}</option>
-							{/each}
-						</select>
+						<Input value={careerLabel} disabled />
 					</div>
 				{/if}
 
-				<Button class="h-11 w-full rounded-2xl bg-blue-600 text-white hover:bg-blue-700" onclick={saveProfile} disabled={saving}>
-					{saving ? 'Guardando...' : 'Guardar cambios'}
-				</Button>
+				{#if readOnly}
+					<p class="rounded-2xl bg-slate-50 px-4 py-3 text-sm text-muted-foreground" data-testid="profile-read-only">
+						Si algún dato es incorrecto, acude a tu jefatura de carrera para corregirlo.
+					</p>
+				{:else}
+					<Button class="h-11 w-full rounded-2xl bg-blue-600 text-white hover:bg-blue-700" onclick={saveProfile} disabled={saving}>
+						{saving ? 'Guardando...' : 'Guardar cambios'}
+					</Button>
+				{/if}
 			{/if}
 		</CardContent>
 	</Card>

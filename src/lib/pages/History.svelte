@@ -16,6 +16,7 @@
 
   import {
     CalendarDays,
+    CheckCircle2,
     ChevronDown,
     Ticket
   } from "lucide-svelte";
@@ -125,7 +126,7 @@
   function mapHoursEntryToItem(entry) {
     const event = entry?.event || null;
     const hoursDelta = Number(entry?.hours_delta ?? 0) || 0;
-    const categoryKey = normalizeCategory(event?.category ?? entry?.category);
+    const categoryKey = normalizeCategory(entry?.category ?? event?.category);
     const categoryMeta = CATEGORY_META[categoryKey];
 
     const movementType = hoursDelta >= 0 ? 'positive' : 'negative';
@@ -147,17 +148,24 @@
     };
   }
 
-  function recalcCategoryBreakdown() {
+  function recalcCategoryBreakdown(categoryTotals = null) {
     const sums = Object.values(CATEGORY_META).reduce((acc, category) => {
       acc[category.key] = 0;
       return acc;
     }, {});
 
-    for (const item of items) {
-      const key = normalizeCategory(item?.categoryKey);
-      const hours = Number(item?.hoursDelta ?? 0) || 0;
-      if (hours > 0) sums[key] += hours;
+    if (categoryTotals && typeof categoryTotals === 'object') {
+      for (const [category, hours] of Object.entries(categoryTotals)) {
+        sums[normalizeCategory(category)] += Number(hours) || 0;
+      }
+    } else {
+      for (const item of items) {
+        const key = normalizeCategory(item?.categoryKey);
+        const hours = Number(item?.hoursDelta ?? 0) || 0;
+        if (hours > 0) sums[key] += hours;
+      }
     }
+    for (const key of Object.keys(sums)) sums[key] = Math.max(0, sums[key]);
 
     const totalPositive = Object.values(sums).reduce((a, b) => a + b, 0);
     categoryBreakdown = Object.values(CATEGORY_META).map((meta) => {
@@ -197,7 +205,7 @@
         totalPages: Number(res?.pagination?.totalPages ?? 1) || 1
       };
 
-      recalcCategoryBreakdown();
+      recalcCategoryBreakdown(res?.category_totals);
     } catch (error) {
       loadError = error?.message || 'No se pudo cargar tu historial de horas.';
     } finally {
@@ -220,6 +228,7 @@
   $: countsAfcHours = hoursGoal > 0;
   $: progressPercent = countsAfcHours ? Math.max(0, Math.min(100, (Number(totalHours || 0) / hoursGoal) * 100)) : 0;
   $: remainingHours = Math.max(0, hoursGoal - Number(totalHours || 0));
+  $: goalReached = countsAfcHours && remainingHours <= 0;
   $: normalizedHistorySearch = normalizeSearchText(historySearch);
   $: filteredItems = !normalizedHistorySearch
     ? items
@@ -256,7 +265,7 @@
       </div>
 
       <div class="mt-3 flex flex-wrap items-baseline gap-3">
-        <div class="text-4xl font-semibold">{Number(totalHours || 0).toFixed(2)}</div>
+        <div class={`text-4xl font-semibold ${goalReached ? 'text-emerald-600' : ''}`} data-testid="total-hours">{Number(totalHours || 0).toFixed(2)}</div>
         {#if countsAfcHours}
           <div class="text-base text-muted-foreground">
             de {hoursGoal} hrs meta
@@ -282,16 +291,23 @@
       <div class="mt-4">
         <div class="h-3 w-full rounded-full bg-slate-100">
           <div
-            class="h-3 rounded-full bg-blue-600 transition-all"
+            class={`h-3 rounded-full transition-all ${goalReached ? 'bg-emerald-500' : 'bg-blue-600'}`}
             style={`width: ${progressPercent}%`}
           ></div>
         </div>
         <div class="mt-2 text-sm text-muted-foreground">
           {progressPercent.toFixed(1)}% completado · Restan {remainingHours.toFixed(2)} hrs
         </div>
-        {#if remainingHours <= 0}
-          <div class="mt-1 text-sm font-semibold text-emerald-700">
-            Meta alcanzada: puedes seguir inscribiéndote y asistiendo, pero ya no se suman horas.
+        {#if goalReached}
+          <div class="mt-4 rounded-2xl border border-emerald-200 bg-emerald-50 p-4" data-testid="hours-goal-reached">
+            <div class="flex items-start gap-2 text-sm font-semibold text-emerald-800">
+              <CheckCircle2 class="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
+              ¡Completaste tus horas de Formación Complementaria!
+            </div>
+            <ul class="mt-2 list-disc space-y-1 pl-9 text-sm text-emerald-900">
+              <li>Puedes seguir inscribiéndote y asistiendo a eventos, pero ya no se sumarán más horas.</li>
+              <li>Ahora puedes acudir a tu jefatura de carrera para solicitar tu constancia de liberación de horas AFC.</li>
+            </ul>
           </div>
         {/if}
       </div>

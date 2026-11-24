@@ -4,11 +4,14 @@
   import { Card } from "$lib/components/ui/card";
   import { Separator } from "$lib/components/ui/separator";
   import { authApi, clearClientRole } from "$lib/services/api";
-  import { clearCurrentUser } from "../../routes/store";
+  import { clearCurrentUser, currentUser } from "../../routes/store";
 
   import { UserRound, Lock, ChevronRight, LogOut } from "lucide-svelte";
 
   let loggingOut = false;
+
+  // Los alumnos entran con Google y sus datos los administra la escuela: solo pueden consultarlos.
+  $: isStudent = String($currentUser?.role || "").toLowerCase() === "student";
 
   async function onLogout() {
     if (loggingOut) return;
@@ -42,13 +45,14 @@
         <UserRound class="h-5 w-5 text-blue-700" />
       </div>
       <div class="flex-1">
-        <div class="text-base font-medium">Editar Perfil</div>
+        <div class="text-base font-medium">{isStudent ? "Ver Perfil" : "Editar Perfil"}</div>
       </div>
       <ChevronRight class="h-5 w-5 text-muted-foreground" />
     </button>
 
     <Separator />
 
+    {#if !isStudent}
     <button
       class="flex w-full items-center gap-4 px-4  text-left hover:bg-accent/40"
       type="button"
@@ -64,6 +68,7 @@
     </button>
 
     <Separator />
+    {/if}
 
     <button
       class="flex w-full items-center gap-4 px-4  text-left hover:bg-red-50 disabled:opacity-60"
