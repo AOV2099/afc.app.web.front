@@ -230,7 +230,7 @@
 	let constanciaPreview = null;
 
 	function canViewConstancia(user) {
-		return isGlobalAdmin && isConstanciaEligibleUser(user);
+		return canManageRow(user) && isConstanciaEligibleUser(user);
 	}
 
 	async function openConstancia(user) {
